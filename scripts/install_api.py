@@ -20,21 +20,35 @@ except ImportError:
     pass
 
 if sys.platform.startswith("linux"):
-    userpath = os.path.expanduser("~/.binaryninja")
-    lastrun = os.path.join(userpath, "lastrun")
-    if os.path.isfile(lastrun):
-        lastrunpath = open(lastrun).read().strip()
-        api_path = os.path.join(lastrunpath, "python")
-        print("Found install folder of {}".format(api_path))
-    else:
-        print("Running on linux, but ~/.binaryninja/lastrun does not exist")
-        sys.exit(0)
+    user_path =  os.path.expanduser("~/.binaryninja")
 elif sys.platform == "darwin":
-    api_path = "/Applications/Binary Ninja.app/Contents/Resources/python"
+    user_path = os.path.expanduser("~/Library/Application Support/Binary Ninja")
+else:
+    user_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Vector35", "BinaryNinja")
+lastrun = os.path.join(user_path, "lastrun")
+
+if os.path.isfile(lastrun):
+    lastrunpath = open(lastrun).read().strip()
+    api_paths = [ os.path.join(lastrunpath, "python") ]
+    print("Found lastrun pointing to {}".format(api_paths[0]))
+else:
+    api_paths = []
+
+if sys.platform.startswith("linux"):
+    if len(api_paths) == 0:
+        api_paths = [ os.path.expanduser("~/binaryninja/python") ]
+    else:
+        api_paths[0] = os.path.join(api_paths[0], "python")
+elif sys.platform == "darwin":
+    if len(api_paths) > 0:
+        api_paths[0] = [ os.path.join(api_paths[0], "..", "..", "Resources", "python") ]
+    api_paths.insert(0, "/Applications/Binary Ninja.app/Contents/Resources/python") #as a backup if lastrun is wrong
 else:
     # Windows
-    api_path = "r'C:\Program Files\Vector35\BinaryNinja\python'"
-
+    if len(api_paths) > 0:
+        api_paths[0] = [ os.path.join(api_paths[0], "python") ]
+    api_paths.insert(0, "r'C:\Program Files\Vector35\BinaryNinja\python'")
+    api_paths.insert(0, os.path.join(os.getenv("APPDATA"), "..", "Local", "Vector35", "BinaryNinja", "python"))
 
 def validate_path(path):
     try:
@@ -54,23 +68,29 @@ def validate_path(path):
 
     return True
 
+while len(api_paths) > 0:
+    api_path = api_paths.pop()
+    if validate_path(api_path):
+        break
+else:
+    while True:
+        print("\nBinary Ninja not found.")
+        if not INTERACTIVE:
+            print("Non-interactive mode selected, failing.")
+            sys.exit(-1)
 
-while not validate_path(api_path):
-    print("\nBinary Ninja not found.")
-    if not INTERACTIVE:
-        print("Non-interactive mode selected, failing.")
-        sys.exit(-1)
+        print("Please provide the path to Binary Ninja's install directory or python folder: \n [{}] : ".format(api_path))
+        new_path = os.path.expanduser(sys.stdin.readline().strip())
+        if len(new_path) == 0:
+            print("\nInvalid path")
+            continue
 
-    print("Please provide the path to Binary Ninja's install directory: \n [{}] : ".format(api_path))
-    new_path = sys.stdin.readline().strip()
-    if len(new_path) == 0:
-        print("\nInvalid path")
-        continue
+        if not new_path.endswith('python'):
+            new_path = os.path.join(new_path, 'python')
 
-    if not new_path.endswith('python'):
-        new_path = os.path.join(new_path, 'python')
-
-    api_path = new_path
+        api_path = new_path
+        if validate_path(api_path):
+            break
 
 if ( len(sys.argv) > 1 and sys.argv[1].lower() == "root" ):
     #write to root site
@@ -90,4 +110,4 @@ else:
 binaryninja_pth_path = os.path.join(install_path, 'binaryninja.pth')
 open(binaryninja_pth_path, 'wb').write(api_path.encode('charmap'))
 
-print("Binary Ninja API installed using {}".format(binaryninja_pth_path))
+print("Binary Ninja API installed using {} pointing to {}".format(binaryninja_pth_path, api_path))

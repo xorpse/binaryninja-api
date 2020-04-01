@@ -150,5 +150,5 @@ For the Personal edition, we recommend simply commenting out the `register_` fun
 [angr]: https://github.com/Vector35/binaryninja-api/blob/dev/python/examples/angr_plugin.py
 [nampa]: https://github.com/kenoph/nampa
 [installing the API]: https://github.com/Vector35/binaryninja-api/blob/dev/scripts/install_api.py
-[settings]: ../getting-started.html#ui.debugMode
-[python.interpreter setting]: ../getting-started.html#python.interpreter
+[settings]: ../getting-started.md#ui.debugMode
+[python.interpreter setting]: ../getting-started.md#python.interpreter

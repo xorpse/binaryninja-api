@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (c) 2015-2020 Vector 35 Inc
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -21,6 +21,7 @@
 
 import sys
 import os
+from glob import glob
 
 import binaryninja.log as log
 from binaryninja.binaryview import BinaryViewType
@@ -29,21 +30,18 @@ from binaryninja.plugin import PluginCommand
 
 # 2-3 compatibility
 from binaryninja import range
+from builtins import str
 
 
-def get_bininfo(bv):
+def get_bininfo(bv, filename=None):
 	if bv is None:
+		if not (os.path.isfile(filename) and os.access(filename, os.R_OK)):
+			return("Cannot read {}\n".format(filename))
+		bv = BinaryViewType.get_view_of_file_with_options(filename, options={'analysis.mode': 'basic', 'analysis.linearSweep.autorun' : False})
+	else:
 		filename = ""
-		if len(sys.argv) > 1:
-			filename = sys.argv[1]
-		else:
-			filename = interaction.get_open_filename_input("Filename:")
-			if filename is None:
-				log.log_warn("No file specified")
-				sys.exit(1)
 
-		bv = BinaryViewType.get_view_of_file(filename)
-		log.log_to_stdout(True)
+	log.log_to_stdout(True)
 
 	contents = "## %s ##\n" % os.path.basename(bv.file.filename)
 	contents += "- START: 0x%x\n\n" % bv.start
@@ -64,6 +62,13 @@ def get_bininfo(bv):
 		length = bv.strings[i].length
 		string = bv.read(start, length)
 		contents += "| 0x%x |%d | %s |\n" % (start, length, string)
+
+	# Note that we need to close BV file handles that we opened to prevent a
+	# memory leak due to a circular reference between BinaryViews and the
+	# FileMetadata that backs them
+
+	if filename != "":
+		bv.file.close()
 	return contents
 
 
@@ -72,6 +77,17 @@ def display_bininfo(bv):
 
 
 if __name__ == "__main__":
-	print(get_bininfo(None))
+	if len(sys.argv) == 1:
+		filename = interaction.get_open_filename_input("Filename:")
+		if filename is None:
+			log.log_warn("No file specified")
+		else:
+			print(get_bininfo(None, filename=str(filename, 'utf8')))
+	else:
+		for i in range(1, len(sys.argv)):
+			print(sys.argv[i])
+			pattern = sys.argv[i]
+			for filename in glob(pattern):
+				print(get_bininfo(None, filename=filename))
 else:
-	PluginCommand.register("Binary Info", "Display basic info about the binary", display_bininfo)
+	PluginCommand.register("Binary Info", "Display basic info about the binary using minimal analysis modes", display_bininfo)

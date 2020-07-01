@@ -1405,7 +1405,7 @@ class Function(object):
 
 	@property
 	def return_type(self):
-		"""Return type of the function"""
+		"""Return type of the function, can be set with either a string representing the function return type or a :py:class:`Type` object"""
 		result = core.BNGetFunctionReturnType(self.handle)
 		if not result.type:
 			return None
@@ -1418,6 +1418,8 @@ class Function(object):
 			type_conf.type = None
 			type_conf.confidence = 0
 		else:
+			if isinstance(value, str):
+				(value, name) = self.view.parse_type_string(value)
 			type_conf.type = value.handle
 			type_conf.confidence = value.confidence
 		core.BNSetUserFunctionReturnType(self.handle, type_conf)

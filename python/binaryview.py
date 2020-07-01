@@ -422,11 +422,13 @@ class DataVariable(object):
 
 	@property
 	def type(self):
-		""" """
+		""" Type of the DataVariable, can be set with either a string representation of the variable type or a :py:class:`Type` object"""
 		return self._type
 
 	@type.setter
 	def type(self, value):
+		if isinstance(value, str):
+			(value, _) = self._view.parse_type_string(value)
 		self._type = value
 
 	@property

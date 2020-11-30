@@ -34,6 +34,7 @@ python/generator.tlog
 
 # Unit Tests
 suite/unit.py
+suite/unit_test.py
 .coverage
 
 # Editors

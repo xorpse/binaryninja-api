@@ -237,7 +237,7 @@ def generate(test_store, outdir, exclude_binaries):
     if not os.path.isdir(os.path.join(os.path.dirname(__file__), test_store)):
         raise TestStoreError("Specified test store is not a directory")
 
-    unittest = UnitTestFile(os.path.join(outdir, "unit.py"), outdir, test_store)
+    unittest = UnitTestFile(os.path.join(outdir, "unit_test.py"), outdir, test_store)
     oracle = OracleTestFile(os.path.join(outdir, "oracle"))
 
     # Generate the tests that don't involve binaries but do involve oracles
@@ -342,7 +342,7 @@ def main():
                       default=False, help="Exclude regeneration of binaries")
     parser.add_option("-o", "--outputdir", default=default_output,
                       dest="outputdir", action="store", type="string",
-                      help="output directory where the unit.py and oracle.py files will be stored (relative to cwd)")
+                      help="output directory where the unit_test.py and oracle.py files will be stored (relative to cwd)")
     parser.add_option("-i", "--inputdir", default=os.path.join("binaries", "test_corpus"),
                       dest="test_store", action="store", type="string",
                       help="input directory containing the binaries you which to generate unit tests from (relative to this file)")

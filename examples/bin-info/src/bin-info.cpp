@@ -103,6 +103,9 @@ int main(int argc, char *argv[])
     x = 0;
     for (auto str_ref : bv->GetStrings()) {
         char *str = (char *)malloc(str_ref.length+1);
+        if (!str)
+            continue;
+
         bv->Read(str, str_ref.start, str_ref.length);
         str[str_ref.length] = 0;
 

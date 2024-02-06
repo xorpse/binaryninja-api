@@ -76,10 +76,10 @@ unsafe impl<'a, C: 'a + BlockContext> CoreOwnedArrayProvider for Edge<'a, C> {
     }
 }
 
-unsafe impl<'a, C: 'a + BlockContext> CoreArrayWrapper<'a> for Edge<'a, C> {
-    type Wrapped = Edge<'a, C>;
+unsafe impl<'a, 'b: 'a, C: 'b + BlockContext> CoreArrayWrapper<'a> for Edge<'b, C> {
+    type Wrapped = Edge<'b, C>;
 
-    unsafe fn wrap_raw(raw: &'a Self::Raw, context: &'a Self::Context) -> Edge<'a, C> {
+    unsafe fn wrap_raw(raw: &'a Self::Raw, context: &'a Self::Context) -> Edge<'b, C> {
         let edge_target = Guard::new(
             BasicBlock::from_raw(raw.target, context.orig_block.context.clone()),
             raw,

@@ -94,6 +94,7 @@ pub enum InstructionTextTokenContents {
     NameSpace,
     GotoLabel(u64),
     Indentation,
+    Brace,
 }
 
 impl InstructionTextToken {
@@ -141,6 +142,7 @@ impl InstructionTextToken {
             InstructionTextTokenContents::NameSpace => InstructionTextTokenType::NameSpaceToken,
             InstructionTextTokenContents::GotoLabel(_) => InstructionTextTokenType::GotoLabelToken,
             InstructionTextTokenContents::Indentation => InstructionTextTokenType::IndentationToken,
+            InstructionTextTokenContents::Brace => InstructionTextTokenType::BraceToken,
         };
 
         let width = text.len() as u64;
@@ -157,6 +159,7 @@ impl InstructionTextToken {
             address,
             typeNames: ptr::null_mut(),
             namesCount: 0,
+            exprIndex: BN_INVALID_EXPR
         })
     }
 
@@ -206,6 +209,10 @@ impl InstructionTextToken {
     pub fn address(&self) -> u64 {
         self.0.address
     }
+
+    pub fn expr_index(&self) -> usize {
+        self.0.exprIndex
+    }
 }
 
 impl Default for InstructionTextToken {
@@ -222,6 +229,7 @@ impl Default for InstructionTextToken {
             address: 0,
             typeNames: ptr::null_mut(),
             namesCount: 0,
+            exprIndex: BN_INVALID_EXPR
         })
     }
 }
@@ -240,6 +248,7 @@ impl Clone for InstructionTextToken {
             confidence: 0xff,
             typeNames: ptr::null_mut(),
             namesCount: 0,
+            exprIndex: self.0.exprIndex
         })
     }
 }

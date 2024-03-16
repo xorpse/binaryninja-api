@@ -51,7 +51,7 @@ void InstructionInfo::AddBranch(BNBranchType type, uint64_t target, Architecture
 
 InstructionTextToken::InstructionTextToken() :
     type(TextToken), value(0), width(WidthIsByteCount), size(0), operand(BN_INVALID_OPERAND),
-    context(NoTokenContext), confidence(BN_FULL_CONFIDENCE), address(0)
+    context(NoTokenContext), confidence(BN_FULL_CONFIDENCE), address(0), exprIndex(BN_INVALID_EXPR)
 {
 	if (width == WidthIsByteCount)
 	{
@@ -64,7 +64,7 @@ InstructionTextToken::InstructionTextToken(BNInstructionTextTokenType t, const s
     size_t o, uint8_t c, const vector<string>& n, uint64_t w) :
     type(t),
     text(txt), value(val), width(w), size(s), operand(o), context(NoTokenContext), confidence(c), address(0),
-    typeNames(n)
+    typeNames(n), exprIndex(BN_INVALID_EXPR)
 {
 	if (width == WidthIsByteCount)
 	{
@@ -76,7 +76,8 @@ InstructionTextToken::InstructionTextToken(BNInstructionTextTokenType t, const s
 InstructionTextToken::InstructionTextToken(BNInstructionTextTokenType t, BNInstructionTextTokenContext ctxt,
     const string& txt, uint64_t a, uint64_t val, size_t s, size_t o, uint8_t c, const vector<string>& n, uint64_t w) :
     type(t),
-    text(txt), value(val), width(w), size(s), operand(o), context(ctxt), confidence(c), address(a), typeNames(n)
+    text(txt), value(val), width(w), size(s), operand(o), context(ctxt), confidence(c), address(a), typeNames(n),
+    exprIndex(BN_INVALID_EXPR)
 {
 	if (width == WidthIsByteCount)
 	{
@@ -87,7 +88,8 @@ InstructionTextToken::InstructionTextToken(BNInstructionTextTokenType t, BNInstr
 
 InstructionTextToken::InstructionTextToken(const BNInstructionTextToken& token) :
     type(token.type), text(token.text), value(token.value), width(token.width), size(token.size),
-    operand(token.operand), context(token.context), confidence(token.confidence), address(token.address)
+    operand(token.operand), context(token.context), confidence(token.confidence), address(token.address),
+    exprIndex(BN_INVALID_EXPR)
 {
 	typeNames.reserve(token.namesCount);
 	for (size_t j = 0; j < token.namesCount; j++)
@@ -120,6 +122,7 @@ static void ConvertInstructionTextToken(const InstructionTextToken& token, BNIns
 	for (size_t i = 0; i < token.typeNames.size(); i++)
 		result->typeNames[i] = BNAllocString(token.typeNames[i].c_str());
 	result->namesCount = token.typeNames.size();
+	result->exprIndex = token.exprIndex;
 }
 
 
@@ -592,6 +595,13 @@ void Architecture::GetRegisterStackInfoCallback(void* ctxt, uint32_t regStack, B
 }
 
 
+BNIntrinsicClass Architecture::GetIntrinsicClassCallback(void* ctxt, uint32_t intrinsic)
+{
+	CallbackRef<Architecture> arch(ctxt);
+	return arch->GetIntrinsicClass(intrinsic);
+}
+
+
 char* Architecture::GetIntrinsicNameCallback(void* ctxt, uint32_t intrinsic)
 {
 	CallbackRef<Architecture> arch(ctxt);
@@ -800,6 +810,7 @@ void Architecture::Register(Architecture* arch)
 	callbacks.getRegisterStackName = GetRegisterStackNameCallback;
 	callbacks.getAllRegisterStacks = GetAllRegisterStacksCallback;
 	callbacks.getRegisterStackInfo = GetRegisterStackInfoCallback;
+	callbacks.getIntrinsicClass = GetIntrinsicClassCallback;
 	callbacks.getIntrinsicName = GetIntrinsicNameCallback;
 	callbacks.getAllIntrinsics = GetAllIntrinsicsCallback;
 	callbacks.getIntrinsicInputs = GetIntrinsicInputsCallback;
@@ -1112,6 +1123,12 @@ BNRegisterStackInfo Architecture::GetRegisterStackInfo(uint32_t)
 uint32_t Architecture::GetRegisterStackForRegister(uint32_t reg)
 {
 	return BNGetArchitectureRegisterStackForRegister(m_object, reg);
+}
+
+
+BNIntrinsicClass Architecture::GetIntrinsicClass(uint32_t intrinsic)
+{
+	return GeneralIntrinsicClass;
 }
 
 
@@ -1753,6 +1770,12 @@ BNRegisterStackInfo CoreArchitecture::GetRegisterStackInfo(uint32_t regStack)
 }
 
 
+BNIntrinsicClass CoreArchitecture::GetIntrinsicClass(uint32_t intrinsic)
+{
+	return BNGetArchitectureIntrinsicClass(m_object, intrinsic);
+}
+
+
 string CoreArchitecture::GetIntrinsicName(uint32_t intrinsic)
 {
 	char* name = BNGetArchitectureIntrinsicName(m_object, intrinsic);
@@ -2123,6 +2146,12 @@ vector<uint32_t> ArchitectureExtension::GetAllRegisterStacks()
 BNRegisterStackInfo ArchitectureExtension::GetRegisterStackInfo(uint32_t regStack)
 {
 	return m_base->GetRegisterStackInfo(regStack);
+}
+
+
+BNIntrinsicClass ArchitectureExtension::GetIntrinsicClass(uint32_t intrinsic)
+{
+	return m_base->GetIntrinsicClass(intrinsic);
 }
 
 

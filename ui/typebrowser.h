@@ -43,13 +43,13 @@ public:
 	typedef std::function<void(UpdateData)> UpdateNodeCallback;
 
 protected:
-	class TypeBrowserModel* m_model;
+	class TypeBrowserModelData* m_model;
 	std::optional<std::weak_ptr<TypeBrowserTreeNode>> m_parent;
 	std::vector<std::shared_ptr<TypeBrowserTreeNode>> m_children;
 	std::map<const TypeBrowserTreeNode*, size_t> m_childIndices;
 	bool m_hasGeneratedChildren;
 
-	TypeBrowserTreeNode(class TypeBrowserModel* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent);
+	TypeBrowserTreeNode(class TypeBrowserModelData* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent);
 	virtual ~TypeBrowserTreeNode() = default;
 	virtual void generateChildren() = 0;
 	void updateChildIndices();
@@ -58,7 +58,7 @@ protected:
 	void addChild(std::shared_ptr<TypeBrowserTreeNode> child);
 
 public:
-	class TypeBrowserModel* model() const { return m_model; }
+	class TypeBrowserModelData* model() const { return m_model; }
 	std::optional<std::shared_ptr<TypeBrowserTreeNode>> parent() const;
 	const std::vector<std::shared_ptr<TypeBrowserTreeNode>>& children();
 	int indexOfChild(std::shared_ptr<const TypeBrowserTreeNode> child) const;
@@ -73,7 +73,7 @@ public:
 class BINARYNINJAUIAPI EmptyTreeNode : public TypeBrowserTreeNode
 {
 public:
-	EmptyTreeNode(class TypeBrowserModel* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent);
+	EmptyTreeNode(class TypeBrowserModelData* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent);
 	virtual ~EmptyTreeNode() = default;
 
 	virtual std::string text(int column) const override;
@@ -91,7 +91,7 @@ class BINARYNINJAUIAPI RootTreeNode : public TypeBrowserTreeNode
 	std::map<std::string, std::shared_ptr<class TypeContainerTreeNode>> m_containerNodes;
 
 public:
-	RootTreeNode(class TypeBrowserModel* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent);
+	RootTreeNode(class TypeBrowserModelData* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent);
 	virtual ~RootTreeNode() = default;
 
 	virtual std::string text(int column) const override;
@@ -111,6 +111,7 @@ public:
 	{
 		None,
 		TypeLibrary,
+		TypeArchive,
 		DebugInfo,
 		Platform,
 		Other
@@ -124,13 +125,14 @@ private:
 
 	SourceType m_sourceType;
 	std::optional<TypeLibraryRef> m_sourceLibrary;
+	std::optional<TypeArchiveRef> m_sourceArchive;
 	std::optional<std::string> m_sourceDebugInfoParser;
 	std::optional<PlatformRef> m_sourcePlatform;
 	std::optional<std::string> m_sourceOtherName;
 	std::optional<BinaryNinja::QualifiedName> m_sourceOriginalName;
 
 public:
-	TypeTreeNode(class TypeBrowserModel* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent, const std::string& id, BinaryNinja::QualifiedName name, TypeRef type);
+	TypeTreeNode(class TypeBrowserModelData* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent, const std::string& id, BinaryNinja::QualifiedName name, TypeRef type);
 	virtual ~TypeTreeNode() = default;
 
 	const std::string& id() const { return m_id; }
@@ -159,7 +161,7 @@ class BINARYNINJAUIAPI TypeContainerTreeNode : public TypeBrowserTreeNode
 	std::map<std::string, std::pair<std::pair<BinaryNinja::QualifiedName, TypeRef>, std::shared_ptr<TypeTreeNode>>> m_typeNodes;
 
 public:
-	TypeContainerTreeNode(class TypeBrowserModel* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent, const std::string& m_containerId);
+	TypeContainerTreeNode(class TypeBrowserModelData* model, std::optional<std::weak_ptr<TypeBrowserTreeNode>> parent, const std::string& m_containerId);
 	virtual ~TypeContainerTreeNode();
 
 	virtual std::string text(int column) const override;
@@ -178,18 +180,19 @@ protected:
 
 //-----------------------------------------------------------------------------
 
-
-class BINARYNINJAUIAPI TypeBrowserModel : public QAbstractItemModel, public BinaryNinja::BinaryDataNotification
+/*! Cursed data struct behind a shared_ptr so Qt stops deleting our model while the background updates run */
+class TypeBrowserModelData: public std::enable_shared_from_this<TypeBrowserModelData>
 {
-	Q_OBJECT
 	BinaryViewRef m_data;
+
+	mutable std::recursive_mutex m_rootNodeMutex; // Controls m_rootNode
 	std::shared_ptr<TypeBrowserTreeNode> m_rootNode;
-	mutable std::recursive_mutex m_rootNodeMutex;
+
+	std::recursive_mutex m_stateMutex; // Controls m_needsUpdate, m_updating
 	bool m_needsUpdate;
 	bool m_updating;
 
-	std::recursive_mutex m_updateMutex;
-	std::vector<std::function<void()>> m_updateCallbacks;
+	std::mutex m_backgroundTaskMutex;
 
 	std::vector<std::string> m_containerIds;
 	std::map<std::string, std::string> m_containerNames;
@@ -197,19 +200,26 @@ class BINARYNINJAUIAPI TypeBrowserModel : public QAbstractItemModel, public Bina
 	std::map<std::string, BinaryNinja::TypeContainer> m_containers;
 
 	std::map<std::string, BinaryViewRef> m_containerViews;
+	std::map<std::string, TypeArchiveRef> m_containerArchives;
+	std::map<std::string, std::string> m_containerArchiveIds;
 	std::map<std::string, TypeLibraryRef> m_containerLibraries;
 	std::map<std::string, DebugInfoRef> m_containerDebugInfos;
 	std::map<std::string, PlatformRef> m_containerPlatforms;
 
-	void updateContainerList();
-	void callUpdateCallbacks();
-	void commitUpdates(std::vector<TypeBrowserTreeNode::UpdateData>& updates);
+	void addContainer(BinaryNinja::TypeContainer cont);
+
+	friend class TypeBrowserModel;
 
 public:
-	TypeBrowserModel(BinaryViewRef data, QObject* parent);
-	virtual ~TypeBrowserModel();
-	BinaryViewRef getData() { return m_data; }
-	std::shared_ptr<TypeBrowserTreeNode> getRootNode() { return m_rootNode; }
+	explicit TypeBrowserModelData(BinaryViewRef data);
+	~TypeBrowserModelData();
+	TypeBrowserModelData(const TypeBrowserModelData&) = delete;
+	TypeBrowserModelData(TypeBrowserModelData&&) = delete;
+	TypeBrowserModelData& operator=(const TypeBrowserModelData&) = delete;
+	TypeBrowserModelData& operator=(TypeBrowserModelData&&) = delete;
+
+	BinaryViewRef getData();
+	std::shared_ptr<TypeBrowserTreeNode> getRootNode();
 
 	std::vector<std::string> containerIds() const;
 
@@ -217,6 +227,54 @@ public:
 	std::optional<std::reference_wrapper<BinaryNinja::TypeContainer>> containerForContainerId(const std::string& id);
 	std::optional<std::reference_wrapper<const BinaryNinja::TypeContainer>> containerForContainerId(const std::string& id) const;
 	std::optional<BinaryViewRef> viewForContainerId(const std::string& id) const;
+	std::optional<TypeArchiveRef> archiveForContainerId(const std::string& id) const;
+	std::optional<std::string> archiveIdForContainerId(const std::string& id) const;
+	std::optional<TypeLibraryRef> libraryForContainerId(const std::string& id) const;
+	std::optional<DebugInfoRef> debugInfoForContainerId(const std::string& id) const;
+	std::optional<PlatformRef> platformForContainerId(const std::string& id) const;
+
+	void addAllContainersForView(BinaryViewRef view);
+
+	void addContainerForView(BinaryViewRef view);
+	void addUserContainerForView(BinaryViewRef view);
+	void addAutoContainerForView(BinaryViewRef view);
+	void addContainerForArchive(TypeArchiveRef archive);
+	void addContainerForArchiveId(const std::string& archiveId, const std::string& path);
+	void addContainerForLibrary(TypeLibraryRef library);
+	void addContainerForDebugInfo(DebugInfoRef debugInfo, const std::string& parser);
+	void addContainerForPlatform(PlatformRef platform);
+	void clearContainers();
+
+	std::vector<std::shared_ptr<TypeContainerTreeNode>> containerNodes() const;
+};
+
+//-----------------------------------------------------------------------------
+
+class BINARYNINJAUIAPI TypeBrowserModel : public QAbstractItemModel, public BinaryNinja::BinaryDataNotification, public BinaryNinja::TypeArchiveNotification
+{
+	Q_OBJECT
+
+	BinaryViewRef m_data;
+	std::shared_ptr<class TypeBrowserModelData> m_modelData;
+
+	void commitUpdate(const TypeBrowserTreeNode::UpdateData& update);
+	void commitUpdates(const std::vector<TypeBrowserTreeNode::UpdateData>& updates);
+
+public:
+	TypeBrowserModel(BinaryViewRef data, QObject* parent);
+	virtual ~TypeBrowserModel();
+	BinaryViewRef getData();
+	std::shared_ptr<TypeBrowserTreeNode> getRootNode();
+
+	std::vector<std::string> containerIds() const;
+	std::vector<std::shared_ptr<TypeContainerTreeNode>> containerNodes() const;
+
+	std::string nameForContainerId(const std::string& id) const;
+	std::optional<std::reference_wrapper<BinaryNinja::TypeContainer>> containerForContainerId(const std::string& id);
+	std::optional<std::reference_wrapper<const BinaryNinja::TypeContainer>> containerForContainerId(const std::string& id) const;
+	std::optional<BinaryViewRef> viewForContainerId(const std::string& id) const;
+	std::optional<TypeArchiveRef> archiveForContainerId(const std::string& id) const;
+	std::optional<std::string> archiveIdForContainerId(const std::string& id) const;
 	std::optional<TypeLibraryRef> libraryForContainerId(const std::string& id) const;
 	std::optional<DebugInfoRef> debugInfoForContainerId(const std::string& id) const;
 	std::optional<PlatformRef> platformForContainerId(const std::string& id) const;
@@ -234,8 +292,6 @@ public:
 	std::shared_ptr<TypeBrowserTreeNode> nodeForIndex(const QModelIndex& index) const;
 	QModelIndex indexForNode(std::shared_ptr<TypeBrowserTreeNode> node, int column = 0) const;
 
-	std::vector<std::shared_ptr<TypeContainerTreeNode>> containerNodes() const;
-
 	bool filter(const QModelIndex& index, const std::string& filter, TypeBrowserFilterMode mode) const;
 	bool lessThan(const QModelIndex& left, const QModelIndex& right) const;
 
@@ -244,9 +300,19 @@ public:
 	void OnTypeReferenceChanged(BinaryNinja::BinaryView* data, const BinaryNinja::QualifiedName& name, BinaryNinja::Type* type) override;
 	void OnTypeFieldReferenceChanged(BinaryNinja::BinaryView* data, const BinaryNinja::QualifiedName& name, uint64_t offset) override;
 
+	void OnTypeAdded(TypeArchiveRef archive, const std::string& id, TypeRef definition) override;
+	void OnTypeUpdated(TypeArchiveRef archive, const std::string& id, TypeRef oldDefinition, TypeRef newDefinition) override;
+	void OnTypeRenamed(TypeArchiveRef archive, const std::string& id, const BinaryNinja::QualifiedName& oldName, const BinaryNinja::QualifiedName& newName) override;
+	void OnTypeDeleted(TypeArchiveRef archive, const std::string& id, TypeRef definition) override;
+
+	void OnTypeArchiveAttached(BinaryNinja::BinaryView* data, const std::string& id, const std::string& path) override;
+	void OnTypeArchiveDetached(BinaryNinja::BinaryView* data, const std::string& id, const std::string& path) override;
+	void OnTypeArchiveConnected(BinaryNinja::BinaryView* data, BinaryNinja::TypeArchive* archive) override;
+	void OnTypeArchiveDisconnected(BinaryNinja::BinaryView* data, BinaryNinja::TypeArchive* archive) override;
+
 Q_SIGNALS:
 	void updatesAboutToHappen();
-	void updateComplete();
+	void updateComplete(bool didAnyHappen);
 
 public Q_SLOTS:
 	void markDirty();
@@ -290,6 +356,7 @@ class BINARYNINJAUIAPI TypeBrowserItemDelegate : public QItemDelegate
 	void initFont();
 public:
 	TypeBrowserItemDelegate(class TypeBrowserView* view);
+	int lineHeight() const;
 	void updateFonts();
 	virtual QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
 	virtual void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
@@ -339,6 +406,8 @@ class BINARYNINJAUIAPI TypeBrowserView : public QFrame, public View, public Filt
 
 	TypeEditor* m_typeEditor;
 	QTextEdit* m_debugText;
+
+	void updateInTransaction(std::function<bool()> transaction);
 
 public:
 	TypeBrowserView(BinaryViewRef data, TypeBrowserContainer* container);
@@ -401,16 +470,52 @@ public:
 	// makeSureItHasPlatform: if the type container is a BV with no platform (raw), ask for one and return nullopt if rejected
 	// preferView: if the type container is a BV and the user/auto-only container, switch to the whole-view container for that BV instead
 	std::optional<BinaryNinja::TypeContainer> selectedTypeContainer(bool makeSureItHasPlatform = true, bool preferView = false) const;
+	// Same as above, but if it returns nullopt, try again with m_data
+	std::optional<BinaryNinja::TypeContainer> selectedTypeContainerOrMData(bool makeSureItHasPlatform = true, bool preferView = false) const;
+
+	// TA selected or TA relevant to selected types, only if JUST ta stuff is selected and only 1 TA
+	std::optional<TypeArchiveRef> selectedTA() const;
+	// Id of TA selected or TA relevant to selected types, only if JUST ta stuff is selected and only 1 TA
+	std::optional<std::string> selectedTAId() const;
+	// TAs selected or TAs relevant to selected types, only if JUST ta stuff is selected
+	std::optional<std::unordered_set<TypeArchiveRef>> selectedTAs() const;
+	// Ids of TAs selected or TAs relevant to selected types, only if JUST ta stuff is selected
+	std::optional<std::unordered_set<std::string>> selectedTAIds() const;
+	// If selectedTAs exist, map of ta ids to ids of selected types from that ta
+	std::optional<std::unordered_map<std::string, std::unordered_set<std::string>>> selectedTATypeIds() const;
+	// All type archives that are attached and connected
+	std::vector<TypeArchiveRef> connectedTAs(BinaryViewRef view) const;
 
 	// Names -> Ids, if any don't exist then nullopt
 	static std::optional<std::unordered_set<std::string>> typeIdsFromNames(BinaryViewRef view, const std::unordered_set<BinaryNinja::QualifiedName>& names);
+	// Ids -> Option<TypeArchive>
+	static std::unordered_map<std::optional<TypeArchiveRef>, std::unordered_set<std::string>> associatedTypeArchivesForTypeIds(BinaryViewRef view, const std::unordered_set<std::string>& typeIds);
 
-	std::optional<std::reference_wrapper<BinaryNinja::TypeContainer>> containerForId(const std::string& containerId, bool makeSureItHasPlatform = false, bool preferView = false);
+	std::optional<BinaryNinja::TypeContainer> containerForId(const std::string& containerId, bool makeSureItHasPlatform = false, bool preferView = false) const;
 
 	// Menu actions
 	static void registerActions();
 	void bindActions();
 	void showContextMenu();
+
+	bool canConnectTypeArchive();
+	void connectTypeArchive();
+
+	bool canCreateTypeArchive();
+	void createTypeArchive();
+	bool canAttachTypeArchive();
+	void attachTypeArchive();
+	bool canDetachTypeArchive();
+	void detachTypeArchive();
+
+	bool canSyncSelectedTypes();
+	void syncSelectedTypes();
+	bool canPushSelectedTypes();
+	void pushSelectedTypes();
+	bool canPullSelectedTypes();
+	void pullSelectedTypes();
+	bool canDisassociateSelectedTypes();
+	void disassociateSelectedTypes();
 
 	bool canCreateNewTypes();
 	void createNewTypes();
@@ -428,12 +533,16 @@ public:
 	void changeTypes();
 	bool canImportType();
 	void importType();
+	bool canImportTypeByGUID(BinaryViewRef view);
+	void importTypeByGUID();
 	bool canAddTypeLibrary();
 	void addTypeLibrary();
 	bool canExpandAll();
 	void expandAll();
 	bool canCollapseAll();
 	void collapseAll();
+	bool canSwitchLayout();
+	void switchLayout();
 
 Q_SIGNALS:
 	void typeNameNavigated(const std::string& typeName, bool newSelection);

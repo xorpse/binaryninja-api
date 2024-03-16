@@ -21,8 +21,9 @@
 import ctypes
 import struct
 from typing import (Optional, List, Union, Mapping,
-	Generator, NewType, Tuple, ClassVar, Dict, Set, Callable, Any)
+	Generator, NewType, Tuple, ClassVar, Dict, Set, Callable, Any, Iterator)
 from dataclasses import dataclass
+from . import deprecation
 
 # Binary Ninja components
 from . import _binaryninjacore as core
@@ -107,6 +108,26 @@ class MediumLevelILLabel:
 			core.BNMediumLevelILInitLabel(self.handle)
 		else:
 			self.handle = handle
+
+	@property
+	def ref(self) -> bool:
+		return self.handle[0].ref
+
+	@ref.setter
+	def ref(self, value):
+		self.handle[0].ref = value
+
+	@property
+	def resolved(self) -> bool:
+		return self.handle[0].resolved
+
+	@property
+	def operand(self) -> InstructionIndex:
+		return InstructionIndex(self.handle[0].operand)
+
+	@operand.setter
+	def operand(self, value: InstructionIndex):
+		self.handle[0].operand = int(value)
 
 
 @dataclass(frozen=True, repr=False)
@@ -262,6 +283,10 @@ class MediumLevelILInstruction(BaseILInstruction):
 	        ("output", "var_list"), ("intrinsic", "intrinsic"), ("params", "expr_list")
 	    ], MediumLevelILOperation.MLIL_INTRINSIC_SSA: [
 	        ("output", "var_ssa_list"), ("intrinsic", "intrinsic"), ("params", "expr_list")
+	    ], MediumLevelILOperation.MLIL_MEMORY_INTRINSIC_OUTPUT_SSA: [
+	        ("dest_memory", "int"), ("output", "var_ssa_list")
+	    ], MediumLevelILOperation.MLIL_MEMORY_INTRINSIC_SSA: [
+	        ("output", "expr"), ("intrinsic", "intrinsic"), ("params", "expr_list"), ("src_memory", "int")
 	    ], MediumLevelILOperation.MLIL_FREE_VAR_SLOT: [
 	        ("dest", "var")
 	    ], MediumLevelILOperation.MLIL_FREE_VAR_SLOT_SSA: [
@@ -418,6 +443,11 @@ class MediumLevelILInstruction(BaseILInstruction):
 		return list(map(lambda x: x[1], self.detailed_operands))
 
 	@property
+	def raw_operands(self) -> OperandsType:
+		"""Raw operand expression indices as specified by the core structure (read-only)"""
+		return self.instr.operands
+
+	@property
 	def detailed_operands(self) -> List[Tuple[str, MediumLevelILOperandType, str]]:
 		"""
 		Returns a list of tuples containing the name of the operand, the operand, and the type of the operand.
@@ -425,6 +455,35 @@ class MediumLevelILInstruction(BaseILInstruction):
 		"""
 		return []
 
+	def traverse(self, cb: Callable[['MediumLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+		"""
+		``traverse`` is a generator that allows you to traverse the MediumLevelILInstruction in a depth-first manner. It will yield the
+		result of the callback function for each node in the tree. Arguments can be passed to the callback function using
+		``args`` and ``kwargs``. See the `Developer Docs <https://docs.binary.ninja/dev/concepts.html#walking-ils>`_ for more examples.
+
+		:param Callable[[MediumLevelILInstruction, Any], Any] cb: The callback function to call for each node in the MediumLevelILInstruction
+		:param Any args: Custom user-defined arguments
+		:param Any kwargs: Custom user-defined keyword arguments
+		:return: An iterator of the results of the callback function
+		:rtype: Iterator[Any]
+
+		:Example:
+			>>> def get_constant_less_than_value(inst: MediumLevelILInstruction, value: int) -> int:
+			>>>     if isinstance(inst, Constant) and inst.constant < value:
+			>>>         return inst.constant
+			>>>
+			>>> list(inst.traverse(get_constant_less_than_value, 10))
+		"""
+		if (result := cb(self, *args, **kwargs)) is not None:
+			yield result
+		for _, op, _ in self.detailed_operands:
+			if isinstance(op, MediumLevelILInstruction):
+				yield from op.traverse(cb, *args, **kwargs)
+			elif isinstance(op, list) and all(isinstance(i, MediumLevelILInstruction) for i in op):
+				for i in op:
+					yield from i.traverse(cb, *args, **kwargs) # type: ignore
+
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`MediumLevelILInstruction.traverse` instead.")
 	def visit_all(self, cb: MediumLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['MediumLevelILInstruction'] = None) -> bool:
 		"""
@@ -448,6 +507,7 @@ class MediumLevelILInstruction(BaseILInstruction):
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`MediumLevelILInstruction.traverse` instead.")
 	def visit_operands(self, cb: MediumLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['MediumLevelILInstruction'] = None) -> bool:
 		"""
@@ -468,6 +528,7 @@ class MediumLevelILInstruction(BaseILInstruction):
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`MediumLevelILInstruction.traverse` instead.")
 	def visit(self, cb: MediumLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['MediumLevelILInstruction'] = None) -> bool:
 		"""
@@ -476,6 +537,7 @@ class MediumLevelILInstruction(BaseILInstruction):
 
 		:param MediumLevelILVisitorCallback cb: Callback function that takes the name of the operand, the operand, operand type, and parent instruction
 		:return: True if all instructions were visited, False if the callback returned False
+
 		:Example:
 		>>> def visitor(_a, inst, _c, _d) -> bool:
 		>>>     if isinstance(inst, Constant):
@@ -498,57 +560,6 @@ class MediumLevelILInstruction(BaseILInstruction):
 					if not i.visit(cb, name, self): # type: ignore
 						return False
 		return True
-
-	def traverse(self, cb: Callable[['MediumLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Any:
-		"""
-		Traverses all MediumLevelILInstructions in the operands of this instruction and any sub-instructions.
-		The callback you provide only needs to accept a single instruction, but accepts anything, and can return whatever you want.
-
-		None is treated as a reserved value to indicate that the traverser should continue descending into subexpressions.
-
-		:param cb: Callback function that takes only the instruction
-		:param args: Custom user-defined arguments
-		:param kwargs: Custom user-defined keyword arguments
-		:return: None if your callback doesn't return anything and all instructions were traversed, otherwise it returns the value from your callback.
-		:Example:
-		>>> # This traverser allows for simplified function signatures in your callback
-		>>> def traverser(inst) -> int:
-		>>>  if isinstance(inst, Constant):
-		>>>   return inst.constant # Stop recursion and return the constant
-		>>>  return None # Continue descending into subexpressions
-
-		>>> # Finds all constants used in the program
-		>>> for inst in bv.mlil_instructions:
-		>>>  if const := inst.traverse(traverser):
-		>>>   print(f"Found constant {const}")
-
-
-		>>> # But it also allows for complex function signatures in your callback
-		>>> def traverser(inst, search_constant, skip_list: List[int] = []) -> int:
-		>>>  if inst.address in skip_list:
-		>>>   return None # Skip this instruction
-		>>>  if isinstance(inst, Constant):
-		>>>   if inst.constant == search_constant:
-		>>>    return inst.address # Stop recursion and return the address of this use
-		>>>  return None # Continue descending into subexpressions
-
-		>>> # Finds all instances of 0xdeadbeaf used in the program
-		>>> for inst in bv.mlil_instructions:
-		>>>  if use_addr := inst.traverse(traverser, 0xdeadbeaf, skip_list=[0x12345678]):
-		>>>   print(f"Found 0xdeadbeef use at {use_addr}")
-		"""
-
-		if (result := cb(self, *args, **kwargs)) is not None:
-			return result
-		for _, op, _ in self.detailed_operands:
-			if isinstance(op, MediumLevelILInstruction):
-				if (result := op.traverse(cb, *args, **kwargs)) is not None:
-					return result
-			elif isinstance(op, list) and all(isinstance(i, MediumLevelILInstruction) for i in op):
-				for i in op:
-					if (result := i.traverse(cb, *args, **kwargs)) is not None:
-						return result
-		return None
 
 	@property
 	def tokens(self) -> TokenList:
@@ -2240,6 +2251,64 @@ class MediumLevelILIntrinsicSsa(MediumLevelILInstruction, SSA):
 
 
 @dataclass(frozen=True, repr=False, eq=False)
+class MediumLevelILMemoryIntrinsicOutputSsa(MediumLevelILInstruction, SSA):
+	def __repr__(self):
+		return f"<MediumLevelILMemoryIntrinsicOutputSsa: {self.dest_memory} {self.output}>"
+
+	@property
+	def dest_memory(self) -> int:
+		return self._get_int(0)
+
+	@property
+	def output(self) -> List[SSAVariable]:
+		return self._get_var_ssa_list(1, 2)
+
+	@property
+	def detailed_operands(self) -> List[Tuple[str, MediumLevelILOperandType, str]]:
+		return [
+			("dest_memory", self.dest_memory, "int"),
+			("output", self.output, "List[SSAVariable]"),
+		]
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class MediumLevelILMemoryIntrinsicSsa(MediumLevelILInstruction, SSA):
+	@property
+	def output(self) -> List[SSAVariable]:
+		inst = self._get_expr(0)
+		assert isinstance(inst, MediumLevelILMemoryIntrinsicOutputSsa), "MediumLevelILMemoryIntrinsicSsa expected MediumLevelILMemoryIntrinsicOutputSsa as first operand"
+		return inst.output
+
+	@property
+	def dest_memory(self) -> int:
+		inst = self._get_expr(0)
+		assert isinstance(inst, MediumLevelILMemoryIntrinsicOutputSsa), "MediumLevelILMemoryIntrinsicSsa expected MediumLevelILMemoryIntrinsicOutputSsa as first operand"
+		return inst.dest_memory
+
+	@property
+	def intrinsic(self) -> 'lowlevelil.ILIntrinsic':
+		return self._get_intrinsic(1)
+
+	@property
+	def params(self) -> List[MediumLevelILInstruction]:
+		return self._get_expr_list(2, 3)
+
+	@property
+	def src_memory(self) -> int:
+		return self._get_int(4)
+
+	@property
+	def detailed_operands(self) -> List[Tuple[str, MediumLevelILOperandType, str]]:
+		return [
+			("output", self.output, "List[SSAVariable]"),
+			("dest_memory", self.dest_memory, "int"),
+			("intrinsic", self.intrinsic, "ILIntrinsic"),
+			("params", self.params, "List[MediumLevelILInstruction]"),
+			("src_memory", self.src_memory, "int"),
+		]
+
+
+@dataclass(frozen=True, repr=False, eq=False)
 class MediumLevelILSetVarSsaField(MediumLevelILInstruction, SetVar, SSA):
 	@property
 	def dest(self) -> SSAVariable:
@@ -3014,8 +3083,9 @@ ILInstruction = {
         MediumLevelILTailcall,  # [("output", "var_list"), ("dest", "expr"), ("params", "expr_list")],
     MediumLevelILOperation.MLIL_INTRINSIC:
         MediumLevelILIntrinsic,  # [("output", "var_list"), ("intrinsic", "intrinsic"), ("params", "expr_list")],
-    MediumLevelILOperation.MLIL_INTRINSIC_SSA:
-        MediumLevelILIntrinsicSsa,  # [("output", "var_ssa_list"), ("intrinsic", "intrinsic"), ("params", "expr_list")],
+    MediumLevelILOperation.MLIL_INTRINSIC_SSA: MediumLevelILIntrinsicSsa,  # [("output", "var_ssa_list"), ("intrinsic", "intrinsic"), ("params", "expr_list")],
+    MediumLevelILOperation.MLIL_MEMORY_INTRINSIC_OUTPUT_SSA: MediumLevelILMemoryIntrinsicOutputSsa,    # [("dest_memory", "int"), ("output", "var_ssa_list")],
+    MediumLevelILOperation.MLIL_MEMORY_INTRINSIC_SSA: MediumLevelILMemoryIntrinsicSsa,    # [("output", "expr"), ("intrinsic", "intrinsic"), ("params", "expr_list"), ("src_memory", "int")],
     MediumLevelILOperation.MLIL_SET_VAR_SSA_FIELD:
         MediumLevelILSetVarSsaField,  # [("prev", "var_ssa_dest_and_src"), ("offset", "int"), ("src", "expr")],
     MediumLevelILOperation.MLIL_SET_VAR_SPLIT_SSA:
@@ -3221,6 +3291,27 @@ class MediumLevelILFunction:
 		for block in self.basic_blocks:
 			yield from block
 
+	def traverse(self, cb: Callable[['MediumLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+		"""
+		``traverse`` iterates through all the instructions in the MediumLevelILInstruction and calls the callback function for
+		each instruction and sub-instruction. See the `Developer Docs <https://docs.binary.ninja/dev/concepts.html#walking-ils>`_ for more examples.
+
+		:param Callable[[MediumLevelILInstruction, Any], Any] cb: Callback function that takes a HighLevelILInstruction and returns a value
+		:param Any args: Custom user-defined arguments
+		:param Any kwargs: Custom user-defined keyword arguments
+		:return: An iterator of the results of the callback function
+		:rtype: Iterator[Any]
+
+		:Example:
+			>>> def find_constants(instr) -> Optional[int]:
+			...     if isinstance(instr, Constant):
+			...         return instr.constant
+			>>> print(list(current_il_function.traverse(find_constants)))
+		"""
+		for instr in self.instructions:
+			yield from instr.traverse(cb, *args, **kwargs)
+
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`MediumLevelILFunction.traverse` instead.")
 	def visit(self, cb: MediumLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function
@@ -3234,6 +3325,7 @@ class MediumLevelILFunction:
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`MediumLevelILFunction.traverse` instead.")
 	def visit_all(self, cb: MediumLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function for each instruction and their operands.
@@ -3246,6 +3338,7 @@ class MediumLevelILFunction:
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`MediumLevelILFunction.traverse` instead.")
 	def visit_operands(self, cb: MediumLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function for each operand and
@@ -3321,6 +3414,43 @@ class MediumLevelILFunction:
 		elif isinstance(operation, MediumLevelILOperation):
 			_operation = operation.value
 		return ExpressionIndex(core.BNMediumLevelILAddExpr(self.handle, _operation, size, a, b, c, d, e))
+
+	def get_expr_count(self) -> int:
+		"""
+		``get_expr_count`` gives a the total number of expressions in this IL function
+
+		You can use this to enumerate all expressions in conjunction with :py:func:`get_expr`
+
+		.. warning :: Not all IL expressions are valid, even if their index is within the bounds of the function,
+		              they might not be used by the function and might not contain properly structured data.
+
+		:return: The number of expressions in the function
+		"""
+		return core.BNGetMediumLevelILExprCount(self.handle)
+
+	def get_expr(self, index: ExpressionIndex) -> Optional[MediumLevelILInstruction]:
+		"""
+		``get_expr`` retrieves the IL expression at a given expression index in the function.
+
+		.. warning :: Not all IL expressions are valid, even if their index is within the bounds of the function,
+		              they might not be used by the function and might not contain properly structured data.
+
+		:param index: Index of desired expression in function
+		:return: A MediumLevelILInstruction object for the expression, if it exists. Otherwise, None
+		"""
+		if index >= self.get_expr_count():
+			return None
+
+		return MediumLevelILInstruction.create(self, index)
+
+	def copy_expr(self, original: MediumLevelILInstruction) -> ExpressionIndex:
+		"""
+		``copy_expr`` adds an expression to the function which is equivalent to the given expression
+
+		:param MediumLevelILInstruction original: the original IL Instruction you want to copy
+		:return: The index of the newly copied expression
+		"""
+		return self.expr(original.operation, original.raw_operands[0], original.raw_operands[1], original.raw_operands[2], original.raw_operands[3], original.raw_operands[4], original.size)
 
 	def replace_expr(self, original: InstructionOrExpression, new: InstructionOrExpression) -> None:
 		"""
@@ -3710,7 +3840,7 @@ class MediumLevelILFunction:
 
 	@property
 	def aliased_vars(self) -> List["variable.Variable"]:
-		"""This returns a list of Variables that are taken reference to and used elsewhere.  You may also wish to consider `MediumLevelIlFunction.vars` and `MediumLevelIlFunction.source_function.parameter_vars`"""
+		"""This returns a list of Variables that are taken reference to and used elsewhere. You may also wish to consider `MediumLevelIlFunction.vars` and `MediumLevelIlFunction.source_function.parameter_vars`"""
 		if self.source_function is None:
 			return []
 

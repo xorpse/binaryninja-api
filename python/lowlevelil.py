@@ -20,7 +20,7 @@
 
 import ctypes
 import struct
-from typing import Generator, List, Optional, Dict, Union, Tuple, NewType, ClassVar, Set, Callable, Any
+from typing import Generator, List, Optional, Dict, Union, Tuple, NewType, ClassVar, Set, Callable, Any, Iterator
 from dataclasses import dataclass
 
 # Binary Ninja components
@@ -35,6 +35,7 @@ from . import variable
 from . import binaryview
 from . import architecture
 from . import types
+from . import deprecation
 from .interaction import show_graph_report
 from .commonil import (
     BaseILInstruction, Constant, BinaryOperation, Tailcall, UnaryOperation, Comparison, SSA, Phi, FloatingPoint,
@@ -67,6 +68,26 @@ class LowLevelILLabel:
 			core.BNLowLevelILInitLabel(self.handle)
 		else:
 			self.handle = handle
+
+	@property
+	def ref(self) -> bool:
+		return self.handle[0].ref
+
+	@ref.setter
+	def ref(self, value):
+		self.handle[0].ref = value
+
+	@property
+	def resolved(self) -> bool:
+		return self.handle[0].resolved
+
+	@property
+	def operand(self) -> InstructionIndex:
+		return InstructionIndex(self.handle[0].operand)
+
+	@operand.setter
+	def operand(self, value: InstructionIndex):
+		self.handle[0].operand = int(value)
 
 
 @dataclass(frozen=True)
@@ -384,6 +405,10 @@ class LowLevelILInstruction(BaseILInstruction):
 	        ("output", "reg_or_flag_list"), ("intrinsic", "intrinsic"), ("param", "expr")
 	    ], LowLevelILOperation.LLIL_INTRINSIC_SSA: [
 	        ("output", "reg_or_flag_ssa_list"), ("intrinsic", "intrinsic"), ("param", "expr")
+	    ], LowLevelILOperation.LLIL_MEMORY_INTRINSIC_OUTPUT_SSA: [
+	        ("dest_memory", "int"), ("output", "reg_ssa_list")
+	    ], LowLevelILOperation.LLIL_MEMORY_INTRINSIC_SSA: [
+	        ("output", "expr"), ("intrinsic", "intrinsic"), ("params", "expr_list"), ("src_memory", "int")
 	    ], LowLevelILOperation.LLIL_BP: [], LowLevelILOperation.LLIL_TRAP: [("vector", "int")],
 	    LowLevelILOperation.LLIL_UNDEF: [], LowLevelILOperation.LLIL_UNIMPL: [], LowLevelILOperation.LLIL_UNIMPL_MEM: [
 	        ("src", "expr")
@@ -549,7 +574,7 @@ class LowLevelILInstruction(BaseILInstruction):
 	def tokens(self) -> TokenList:
 		"""LLIL tokens (read-only)"""
 		# special case for those instructions that don't have tokens
-		if isinstance(self, (LowLevelILCallOutputSsa, LowLevelILCallParam, LowLevelILCallStackSsa)):
+		if isinstance(self, (LowLevelILCallOutputSsa, LowLevelILCallParam, LowLevelILCallStackSsa, LowLevelILMemoryIntrinsicOutputSsa)):
 			return []
 
 		count = ctypes.c_ulonglong()
@@ -666,6 +691,11 @@ class LowLevelILInstruction(BaseILInstruction):
 		return result
 
 	@property
+	def raw_operands(self) -> OperandsType:
+		"""Raw operand expression indices as specified by the core structure (read-only)"""
+		return self.instr.operands
+
+	@property
 	def operands(self) -> List[LowLevelILOperandType]:
 		"""Operands for the instruction"""
 		return list(map(lambda x: x[1], self.detailed_operands))
@@ -678,7 +708,36 @@ class LowLevelILInstruction(BaseILInstruction):
 		"""
 		return []
 
+	def traverse(self, cb: Callable[['LowLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+		"""
+		``traverse`` is a generator that allows you to traverse the LowLevelILInstruction in a depth-first manner. It will yield the
+		result of the callback function for each node in the tree. Arguments can be passed to the callback function using
+		``args`` and ``kwargs``. See the `Developer Docs <https://docs.binary.ninja/dev/concepts.html#walking-ils>`_ for more examples.
 
+		:param Callable[[LowLevelILInstruction, Any], Any] cb: The callback function to call for each node in the LowLevelILInstruction
+		:param Any args: Custom user-defined arguments
+		:param Any kwargs: Custom user-defined keyword arguments
+		:return: An iterator of the results of the callback function
+		:rtype: Iterator[Any]
+
+		:Example:
+			>>> def get_constant_less_than_value(inst: LowLevelILInstruction, value: int) -> int:
+			>>>     if isinstance(inst, Constant) and inst.constant < value:
+			>>>         return inst.constant
+			>>>
+			>>> list(inst.traverse(get_constant_less_than_value, 10))
+		"""
+		if (result := cb(self, *args, **kwargs)) is not None:
+			yield result
+		for _, op, _ in self.detailed_operands:
+			if isinstance(op, LowLevelILInstruction):
+				yield from op.traverse(cb, *args, **kwargs)
+			elif isinstance(op, list) and all(isinstance(i, LowLevelILInstruction) for i in op):
+				for i in op:
+					yield from i.traverse(cb, *args, **kwargs) # type: ignore
+
+
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`LowLevelILInstruction.traverse` instead.")
 	def visit_all(self, cb: LowLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['LowLevelILInstruction'] = None) -> bool:
 		"""
@@ -702,6 +761,7 @@ class LowLevelILInstruction(BaseILInstruction):
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`LowLevelILInstruction.traverse` instead.")
 	def visit_operands(self, cb: LowLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['LowLevelILInstruction'] = None) -> bool:
 		"""
@@ -722,6 +782,7 @@ class LowLevelILInstruction(BaseILInstruction):
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`LowLevelILInstruction.traverse` instead.")
 	def visit(self, cb: LowLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['LowLevelILInstruction'] = None) -> bool:
 		"""
@@ -741,58 +802,6 @@ class LowLevelILInstruction(BaseILInstruction):
 					if not i.visit(cb, name, self): # type: ignore
 						return False
 		return True
-
-	def traverse(self, cb: Callable[['LowLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Any:
-		"""
-		Traverses all LowLevelILInstructions in the operands of this instruction and any sub-instructions.
-		The callback you provide only needs to accept a single instruction, but accepts anything, and can return whatever you want.
-
-		None is treated as a reserved value to indicate that the traverser should continue descending into subexpressions.
-
-		:param cb: Callback function that takes only the instruction
-		:param args: Custom user-defined arguments
-		:param kwargs: Custom user-defined keyword arguments
-		:return: None if your callback doesn't return anything and all instructions were traversed, otherwise it returns the value from your callback.
-		:Example:
-		>>> # This traverser allows for simplified function signatures in your callback
-		>>> def traverser(inst) -> int:
-		>>>  if isinstance(inst, Constant):
-		>>>   return inst.constant # Stop recursion and return the constant
-		>>>  return None # Continue descending into subexpressions
-
-		>>> # Finds all constants used in the program
-		>>> for inst in bv.mlil_instructions:
-		>>>  if const := inst.traverse(traverser):
-		>>>   print(f"Found constant {const}")
-
-
-		>>> # But it also allows for complex function signatures in your callback
-		>>> def traverser(inst, search_constant, skip_list: List[int] = []) -> int:
-		>>>  if inst.address in skip_list:
-		>>>   return None # Skip this instruction
-		>>>  if isinstance(inst, Constant):
-		>>>   if inst.constant == search_constant:
-		>>>    return inst.address # Stop recursion and return the address of this use
-		>>>  return None # Continue descending into subexpressions
-
-		>>> # Finds all instances of 0xdeadbeaf used in the program
-		>>> for inst in bv.mlil_instructions:
-		>>>  if use_addr := inst.traverse(traverser, 0xdeadbeaf, skip_list=[0x12345678]):
-		>>>   print(f"Found 0xdeadbeef use at {use_addr}")
-		"""
-
-		if (result := cb(self, *args, **kwargs)) is not None:
-			return result
-		for _, op, _ in self.detailed_operands:
-			if isinstance(op, LowLevelILInstruction):
-				if (result := op.traverse(cb, *args, **kwargs)) is not None:
-					return result
-			elif isinstance(op, list) and all(isinstance(i, LowLevelILInstruction) for i in op):
-				for i in op:
-					if (result := i.traverse(cb, *args, **kwargs)) is not None:
-						return result
-		return None
-
 
 	@property
 	def prefix_operands(self) -> List[LowLevelILOperandType]:
@@ -2645,6 +2654,71 @@ class LowLevelILIntrinsicSsa(LowLevelILInstruction, SSA):
 
 
 @dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILMemoryIntrinsicOutputSsa(LowLevelILInstruction, SSA):
+	def __repr__(self):
+		return f"<LowLevelILMemoryIntrinsicOutputSsa: {self.dest_memory} {self.output}>"
+
+	@property
+	def dest_memory(self) -> int:
+		return self._get_int(0)
+
+	@property
+	def output(self) -> List[SSARegisterOrFlag]:
+		return self._get_reg_or_flag_ssa_list(1)
+
+	@property
+	def detailed_operands(self) -> List[Tuple[str, LowLevelILOperandType, str]]:
+		return [
+			("dest_memory", self.dest_memory, "int"),
+			("output", self.output, "List[SSARegisterOrFlag]"),
+		]
+
+
+@dataclass(frozen=True, repr=False, eq=False)
+class LowLevelILMemoryIntrinsicSsa(LowLevelILInstruction, SSA):
+	@property
+	def output(self) -> List[SSARegisterOrFlag]:
+		inst = self._get_expr(0)
+		assert isinstance(inst, LowLevelILMemoryIntrinsicOutputSsa), "LowLevelILMemoryIntrinsicSsa expected LowLevelILMemoryIntrinsicOutputSsa as first operand"
+		return inst.output
+
+	@property
+	def dest_memory(self) -> int:
+		inst = self._get_expr(0)
+		assert isinstance(inst, LowLevelILMemoryIntrinsicOutputSsa), "LowLevelILMemoryIntrinsicSsa expected LowLevelILMemoryIntrinsicOutputSsa as first operand"
+		return inst.dest_memory
+
+	@property
+	def intrinsic(self) -> ILIntrinsic:
+		return self._get_intrinsic(1)
+
+	@property
+	def param(self) -> LowLevelILCallParam:
+		# kept for backwards compatibility use 'params' instead
+		result = self._get_expr(2)
+		assert isinstance(result, LowLevelILCallParam)
+		return result
+
+	@property
+	def params(self) -> List[LowLevelILInstruction]:
+		return self.param.src
+
+	@property
+	def src_memory(self) -> int:
+		return self._get_int(3)
+
+	@property
+	def detailed_operands(self) -> List[Tuple[str, LowLevelILOperandType, str]]:
+		return [
+			("output", self.output, "List[SSARegisterOrFlag]"),
+			("intrinsic", self.intrinsic, "ILIntrinsic"),
+			("params", self.params, "List[LowLevelILInstruction]"),
+			("dest_memory", self.dest_memory, "int"),
+			("src_memory", self.src_memory, "int"),
+		]
+
+
+@dataclass(frozen=True, repr=False, eq=False)
 class LowLevelILSetRegSsaPartial(LowLevelILInstruction, SetReg, SSA):
 	@property
 	def full_reg(self) -> SSARegister:
@@ -3011,7 +3085,9 @@ ILInstruction:Dict[LowLevelILOperation, LowLevelILInstruction] = {  # type: igno
     LowLevelILOperation.LLIL_ADD_OVERFLOW: LowLevelILAddOverflow,                   #  [("left", "expr"), ("right", "expr")],
     LowLevelILOperation.LLIL_SYSCALL: LowLevelILSyscall,                            #  [],
     LowLevelILOperation.LLIL_INTRINSIC: LowLevelILIntrinsic,                        #  [("output", "reg_or_flag_list"), ("intrinsic", "intrinsic"), ("param", "expr")],
-    LowLevelILOperation.LLIL_INTRINSIC_SSA: LowLevelILIntrinsicSsa,                 #  [("output", "reg_or_flag_ssa_list"), ("intrinsic", "intrinsic"), ("param", "expr")],
+    LowLevelILOperation.LLIL_INTRINSIC_SSA: LowLevelILIntrinsicSsa,                 #  [("output", "reg_or_flag_ssa_list"), ("intrinsic", "intrinsic"), ("params", "expr_list")],
+    LowLevelILOperation.LLIL_MEMORY_INTRINSIC_OUTPUT_SSA: LowLevelILMemoryIntrinsicOutputSsa,    #  [("dest_memory", "int"), ("output", "reg_or_flag_ssa_list")],
+    LowLevelILOperation.LLIL_MEMORY_INTRINSIC_SSA: LowLevelILMemoryIntrinsicSsa,    #  [("output", "expr"), ("intrinsic", "intrinsic"), ("params", "expr_list"), ("src_memory", "int")],
     LowLevelILOperation.LLIL_BP: LowLevelILBp,                                      #  [],
     LowLevelILOperation.LLIL_TRAP: LowLevelILTrap,                                  #  [("vector", "int")],
     LowLevelILOperation.LLIL_UNDEF: LowLevelILUndef,                                #  [],
@@ -3181,7 +3257,7 @@ class LowLevelILFunction:
 	def __hash__(self):
 		return hash(ctypes.addressof(self.handle.contents))
 
-	def __getitem__(self, i:ExpressionIndex) -> LowLevelILInstruction:
+	def __getitem__(self, i: InstructionIndex) -> LowLevelILInstruction:
 		if isinstance(i, slice) or isinstance(i, tuple):
 			raise IndexError("expected integer instruction index")
 		if i < -len(self) or i >= len(self):
@@ -3275,6 +3351,27 @@ class LowLevelILFunction:
 		for block in self.basic_blocks:
 			yield from block
 
+	def traverse(self, cb: Callable[['LowLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+		"""
+		``traverse`` iterates through all the instructions in the LowLevelILFunction and calls the callback function for
+		each instruction and sub-instruction. See the `Developer Docs <https://docs.binary.ninja/dev/concepts.html#walking-ils>`_ for more examples.
+
+		:param Callable[[LowLevelILInstruction, Any], Any] cb: The callback function to call for each node in the LowLevelILInstruction
+		:param Any args: Custom user-defined arguments
+		:param Any kwargs: Custom user-defined keyword arguments
+		:return: An iterator of the results of the callback function
+		:rtype: Iterator[Any]
+
+		:Example:
+			>>> def find_constants(instr) -> Optional[int]:
+			...     if isinstance(instr, Constant):
+			...         return instr.constant
+			>>> print(list(current_il_function.traverse(find_constants)))
+		"""
+		for instr in self.instructions:
+			yield from instr.traverse(cb, *args, **kwargs)
+
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`LowLevelILFunction.traverse` instead.")
 	def visit(self, cb: LowLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function
@@ -3288,6 +3385,7 @@ class LowLevelILFunction:
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`LowLevelILFunction.traverse` instead.")
 	def visit_all(self, cb: LowLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function for each instruction and their operands.
@@ -3300,6 +3398,7 @@ class LowLevelILFunction:
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`LowLevelILFunction.traverse` instead.")
 	def visit_operands(self, cb: LowLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function for each operand and
@@ -3646,6 +3745,43 @@ class LowLevelILFunction:
 		else:
 			assert False, "flags type unsupported"
 		return ExpressionIndex(core.BNLowLevelILAddExpr(self.handle, operation, size, _flags, a, b, c, d))
+
+	def get_expr_count(self) -> int:
+		"""
+		``get_expr_count`` gives a the total number of expressions in this IL function
+
+		You can use this to enumerate all expressions in conjunction with :py:func:`get_expr`
+
+		.. warning :: Not all IL expressions are valid, even if their index is within the returned value from this,
+		              they might not be used by the function and might not contain properly structured data.
+
+		:return: The number of expressions in the function
+		"""
+		return core.BNGetLowLevelILExprCount(self.handle)
+
+	def get_expr(self, index: ExpressionIndex) -> Optional[LowLevelILInstruction]:
+		"""
+		``get_expr`` retrieves the IL expression at a given expression index in the function.
+
+		.. warning :: Not all IL expressions are valid, even if their index is within the bounds of the function,
+		              they might not be used by the function and might not contain properly structured data.
+
+		:param index: Index of desired expression in function
+		:return: A LowLevelILInstruction object for the expression, if it exists. Otherwise, None
+		"""
+		if index >= self.get_expr_count():
+			return None
+
+		return LowLevelILInstruction.create(self, index)
+
+	def copy_expr(self, original: LowLevelILInstruction) -> ExpressionIndex:
+		"""
+		``copy_expr`` adds an expression to the function which is equivalent to the given expression
+
+		:param LowLevelILInstruction original: the original IL Instruction you want to copy
+		:return: The index of the newly copied expression
+		"""
+		return self.expr(original.operation, original.raw_operands[0], original.raw_operands[1], original.raw_operands[2], original.raw_operands[3], original.size, original.flags)
 
 	def replace_expr(self, original: InstructionOrExpression, new: InstructionOrExpression) -> None:
 		"""

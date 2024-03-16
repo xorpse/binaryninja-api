@@ -20,7 +20,7 @@
 
 import ctypes
 import struct
-from typing import Optional, Generator, List, Union, NewType, Tuple, ClassVar, Mapping, Set, Callable, Any
+from typing import Optional, Generator, List, Union, NewType, Tuple, ClassVar, Mapping, Set, Callable, Any, Iterator
 from dataclasses import dataclass
 from enum import Enum
 
@@ -767,6 +767,11 @@ class HighLevelILInstruction(BaseILInstruction):
 		return GotoLabel(self.function, self.core_instr.operands[operand_index])
 
 	@property
+	def raw_operands(self) -> OperandsType:
+		"""Raw operand expression indices as specified by the core structure (read-only)"""
+		return self.instr.operands
+
+	@property
 	def operands(self) -> List[HighLevelILOperandType]:
 		"""Operands for the instruction"""
 		return list(map(lambda x: x[1], self.detailed_operands))
@@ -779,6 +784,35 @@ class HighLevelILInstruction(BaseILInstruction):
 		"""
 		return []
 
+	def traverse(self, cb: Callable[['HighLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+		"""
+		``traverse`` is a generator that allows you to traverse the HLIL AST in a depth-first manner. It will yield the
+		result of the callback function for each node in the AST. Arguments can be passed to the callback function using
+		``args`` and ``kwargs``. See the `Developer Docs <https://docs.binary.ninja/dev/concepts.html#walking-ils>`_ for more examples.
+
+		:param Callable[[HighLevelILInstruction, Any], Any] cb: The callback function to call for each node in the HighLevelILInstruction
+		:param Any args: Custom user-defined arguments
+		:param Any kwargs: Custom user-defined keyword arguments
+		:return: An iterator of the results of the callback function
+		:rtype: Iterator[Any]
+
+		:Example:
+			>>> def get_constant_less_than_value(inst: HighLevelILInstruction, value: int) -> int:
+			>>>     if isinstance(inst, Constant) and inst.constant < value:
+			>>>         return inst.constant
+			>>>
+			>>> list(inst.traverse(get_constant_less_than_value, 10))
+		"""
+		if (result := cb(self, *args, **kwargs)) is not None:
+			yield result
+		for _, op, _ in self.detailed_operands:
+			if isinstance(op, HighLevelILInstruction):
+				yield from op.traverse(cb, *args, **kwargs)
+			elif isinstance(op, list) and all(isinstance(i, HighLevelILInstruction) for i in op):
+				for i in op:
+					yield from i.traverse(cb, *args, **kwargs) # type: ignore
+
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`HighLevelILInstruction.traverse` instead.")
 	def visit_all(self, cb: HighLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['HighLevelILInstruction'] = None) -> bool:
 		"""
@@ -787,6 +821,7 @@ class HighLevelILInstruction(BaseILInstruction):
 
 		:param HighLevelILVisitorCallback cb: Callback function that takes the name of the operand, the operand, operand type, and parent instruction
 		:return: True if all instructions were visited, False if the callback returned False
+
 		"""
 		if cb(name, self, "HighLevelILInstruction", parent) == False:
 			return False
@@ -802,6 +837,7 @@ class HighLevelILInstruction(BaseILInstruction):
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`HighLevelILInstruction.traverse` instead.")
 	def visit_operands(self, cb: HighLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['HighLevelILInstruction'] = None) -> bool:
 		"""
@@ -822,6 +858,7 @@ class HighLevelILInstruction(BaseILInstruction):
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`HighLevelILInstruction.traverse` instead.")
 	def visit(self, cb: HighLevelILVisitorCallback,
 	       name: str = "root", parent: Optional['HighLevelILInstruction'] = None) -> bool:
 		"""
@@ -830,6 +867,7 @@ class HighLevelILInstruction(BaseILInstruction):
 
 		:param HighLevelILVisitorCallback cb: Callback function that takes the name of the operand, the operand, operand type, and parent instruction
 		:return: True if all instructions were visited, False if the callback returned False
+
 		:Example:
 		>>> def visitor(_a, inst, _c, _d) -> bool:
 		>>>     if isinstance(inst, Constant):
@@ -852,57 +890,6 @@ class HighLevelILInstruction(BaseILInstruction):
 					if not i.visit(cb, name, self): # type: ignore
 						return False
 		return True
-
-	def traverse(self, cb: Callable[['HighLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Any:
-		"""
-		Traverses all HighLevelILInstructions in the operands of this instruction and any sub-instructions.
-		The callback you provide only needs to accept a single instruction, but accepts anything, and can return whatever you want.
-
-		None is treated as a reserved value to indicate that the traverser should continue descending into subexpressions.
-
-		:param cb: Callback function that takes only the instruction
-		:param args: Custom user-defined arguments
-		:param kwargs: Custom user-defined keyword arguments
-		:return: None if your callback doesn't return anything and all instructions were traversed, otherwise it returns the value from your callback.
-		:Example:
-		>>> # This traverser allows for simplified function signatures in your callback
-		>>> def traverser(inst) -> int:
-		>>>  if isinstance(inst, Constant):
-		>>>   return inst.constant # Stop recursion and return the constant
-		>>>  return None # Continue descending into subexpressions
-
-		>>> # Finds all constants used in the program
-		>>> for inst in bv.hlil_instructions:
-		>>>  if const := inst.traverse(traverser):
-		>>>   print(f"Found constant {const}")
-
-
-		>>> # But it also allows for complex function signatures in your callback
-		>>> def traverser(inst, search_constant, skip_list: List[int] = []) -> int:
-		>>>  if inst.address in skip_list:
-		>>>   return None # Skip this instruction
-		>>>  if isinstance(inst, Constant):
-		>>>   if inst.constant == search_constant:
-		>>>    return inst.address # Stop recursion and return the address of this use
-		>>>  return None # Continue descending into subexpressions
-
-		>>> # Finds all instances of 0xdeadbeaf used in the program
-		>>> for inst in bv.hlil_instructions:
-		>>>  if use_addr := inst.traverse(traverser, 0xdeadbeaf, skip_list=[0x12345678]):
-		>>>   print(f"Found 0xdeadbeef use at {use_addr}")
-		"""
-
-		if (result := cb(self, *args, **kwargs)) is not None:
-			return result
-		for _, op, _ in self.detailed_operands:
-			if isinstance(op, HighLevelILInstruction):
-				if (result := op.traverse(cb, *args, **kwargs)) is not None:
-					return result
-			elif isinstance(op, list) and all(isinstance(i, HighLevelILInstruction) for i in op):
-				for i in op:
-					if (result := i.traverse(cb, *args, **kwargs)) is not None:
-						return result
-		return None
 
 
 @dataclass(frozen=True, repr=False, eq=False)
@@ -2567,7 +2554,35 @@ class HighLevelILFunction:
 
 		return HighLevelILBasicBlock(block, self, view)
 
+	def traverse(self, cb: Callable[['HighLevelILInstruction', Any], Any], *args: Any, **kwargs: Any) -> Iterator[Any]:
+		"""
+		``traverse`` iterates through all the instructions in the HighLevelILInstruction and calls the callback function for
+		each instruction and sub-instruction. See the `Developer Docs <https://docs.binary.ninja/dev/concepts.html#walking-ils>`_ for more examples.
 
+		:param Callable[[HighLevelILInstruction, Any], Any] cb: The callback function to call for each node in the HighLevelILInstruction
+		:param Any args: Custom user-defined arguments
+		:param Any kwargs: Custom user-defined keyword arguments
+		:return: An iterator of the results of the callback function
+		:rtype: Iterator[Any]
+
+		:Example:
+			>>> # find all calls to memcpy where the third parameter is not a constant
+			>>> def find_non_constant_memcpy(i, target) -> HighLevelILInstruction:
+			... 	match i:
+			... 		case Localcall(dest=Constant(constant=c), params=[_, _, p]) if c == target and not isinstance(p, Constant):
+			... 			return i
+			>>> target_address = bv.get_symbol_by_raw_name('_memcpy').address
+			>>> list(current_il_function.traverse(find_non_constant_memcpy, target_address))
+		"""
+		root = self.root
+		if root is None:
+			raise ValueError("HighLevelILFunction has no root")
+		if not isinstance(root, HighLevelILBlock):
+			root = [root]
+		for instr in root:
+			yield from instr.traverse(cb, *args, **kwargs)
+
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`HighLevelILFunction.traverse` instead.")
 	def visit(self, cb: HighLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function
@@ -2581,6 +2596,7 @@ class HighLevelILFunction:
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`HighLevelILFunction.traverse` instead.")
 	def visit_all(self, cb: HighLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function for each instruction and their operands.
@@ -2593,6 +2609,7 @@ class HighLevelILFunction:
 				return False
 		return True
 
+	@deprecation.deprecated(deprecated_in="4.0.4907", details="Use :py:func:`HighLevelILFunction.traverse` instead.")
 	def visit_operands(self, cb: HighLevelILVisitorCallback) -> bool:
 		"""
 		Iterates over all the instructions in the function and calls the callback function for each operand and
@@ -2605,7 +2622,6 @@ class HighLevelILFunction:
 			if not instr.visit_operands(cb):
 				return False
 		return True
-
 
 	@property
 	def instructions(self) -> Generator[HighLevelILInstruction, None, None]:
@@ -2772,6 +2788,43 @@ class HighLevelILFunction:
 			operation_value = operation.value
 		return ExpressionIndex(core.BNHighLevelILAddExpr(self.handle, operation_value, size, a, b, c, d, e))
 
+	def get_expr_count(self) -> int:
+		"""
+		``get_expr_count`` gives a the total number of expressions in this IL function
+
+		You can use this to enumerate all expressions in conjunction with :py:func:`get_expr`
+
+		.. warning :: Not all IL expressions are valid, even if their index is within the bounds of the function,
+		              they might not be used by the function and might not contain properly structured data.
+
+		:return: The number of expressions in the function
+		"""
+		return core.BNGetHighLevelILExprCount(self.handle)
+
+	def get_expr(self, index: ExpressionIndex) -> Optional[HighLevelILInstruction]:
+		"""
+		``get_expr`` retrieves the IL expression at a given expression index in the function.
+
+		.. warning :: Not all IL expressions are valid, even if their index is within the bounds of the function,
+		              they might not be used by the function and might not contain properly structured data.
+
+		:param index: Index of desired expression in function
+		:return: A HighLevelILInstruction object for the expression, if it exists. Otherwise, None
+		"""
+		if index >= self.get_expr_count():
+			return None
+
+		return HighLevelILInstruction.create(self, index)
+
+	def copy_expr(self, original: HighLevelILInstruction) -> ExpressionIndex:
+		"""
+		``copy_expr`` adds an expression to the function which is equivalent to the given expression
+
+		:param HighLevelILInstruction original: the original IL Instruction you want to copy
+		:return: The index of the newly copied expression
+		"""
+		return self.expr(original.operation, original.raw_operands[0], original.raw_operands[1], original.raw_operands[2], original.raw_operands[3], original.raw_operands[4], original.size)
+
 	def replace_expr(self, original: InstructionOrExpression, new: InstructionOrExpression) -> None:
 		"""
 		``replace_expr`` allows modification of HLIL expressions
@@ -2888,7 +2941,7 @@ class HighLevelILFunction:
 
 	@property
 	def aliased_vars(self) -> List["variable.Variable"]:
-		"""This returns a list of Variables that are taken reference to and used elsewhere.  You may also wish to consider `HighLevelIlFunction.vars` and `HighLevelIlFunction.source_function.parameter_vars`"""
+		"""This returns a list of Variables that are taken reference to and used elsewhere. You may also wish to consider `HighLevelIlFunction.vars` and `HighLevelIlFunction.source_function.parameter_vars`"""
 		if self.source_function is None:
 			return []
 

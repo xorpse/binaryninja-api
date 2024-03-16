@@ -102,6 +102,7 @@ private Q_SLOTS:
 
 public:
 	SidebarWidgetContainer(Sidebar* sidebar, SidebarContainerLocation location);
+	virtual ~SidebarWidgetContainer();
 
 	Sidebar* sidebar() const { return m_sidebar; }
 	Splitter* contentSplitter() const { return m_contentSplitter; }
@@ -111,6 +112,7 @@ public:
 	void setActiveContext(SplitPaneWidget* panes, const QString& dataType);
 	void destroyContext(ViewFrame* frame);
 	void destroyContext(SplitPaneWidget* panes);
+	void destroyViewsForContext(SplitPaneWidget* panes);
 
 	bool isContentActive() const { return !m_docked.empty(); }
 	bool isActive(SidebarWidgetType* type) const { return m_active.count(type) != 0; }
@@ -133,6 +135,7 @@ public:
 	bool hasWidgetWithTitle(SidebarWidgetType* type, const QString& title) const;
 	bool activateWidgetWithTitle(SidebarWidgetType* type, const QString& title) const;
 	bool hasContent(SidebarWidgetType* type) const;
+	bool shouldHide(SidebarWidgetType* type) const;
 
 	virtual QSize sizeHint() const override;
 

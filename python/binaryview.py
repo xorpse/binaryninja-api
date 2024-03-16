@@ -45,7 +45,7 @@ from .enums import (
     AnalysisState, SymbolType, Endianness, ModificationStatus, StringType, SegmentFlag, SectionSemantics, FindFlag,
     TypeClass, BinaryViewEventType, FunctionGraphType, TagReferenceType, TagTypeType, RegisterValueType, DisassemblyOption
 )
-from .exceptions import RelocationWriteException, ILException
+from .exceptions import RelocationWriteException, ILException, ExternalLinkException
 
 from . import associateddatastore  # required for _BinaryViewAssociatedDataStore
 from .log import log_warn, log_error, Logger
@@ -68,6 +68,7 @@ from . import highlevelil
 from . import debuginfo
 from . import flowgraph
 from . import project
+from . import typearchive
 # The following are imported as such to allow the type checker disambiguate the module name
 # from properties and methods of the same name
 from . import workflow as _workflow
@@ -174,6 +175,10 @@ class NotificationType(IntFlag):
 	ComponentFunctionRemoved = 1 << 36
 	ComponentDataVariableAdded = 1 << 37
 	ComponentDataVariableRemoved = 1 << 38
+	TypeArchiveAttached = 1 << 39
+	TypeArchiveDetached = 1 << 40
+	TypeArchiveConnected = 1 << 41
+	TypeArchiveDisconnected = 1 << 42
 	BinaryDataUpdates = DataWritten | DataInserted | DataRemoved
 	FunctionLifetime = FunctionAdded | FunctionRemoved
 	FunctionUpdates = FunctionLifetime | FunctionUpdated
@@ -191,6 +196,7 @@ class NotificationType(IntFlag):
 	SectionLifetime = SectionAdded | SectionRemoved
 	SectionUpdates = SectionLifetime | SectionUpdated
 	ComponentUpdates = (ComponentAdded | ComponentRemoved | ComponentMoved | ComponentFunctionAdded | ComponentFunctionRemoved | ComponentDataVariableAdded | ComponentDataVariableRemoved)
+	TypeArchiveUpdates = (TypeArchiveAttached | TypeArchiveDetached | TypeArchiveConnected | TypeArchiveDisconnected)
 
 
 class BinaryDataNotification:
@@ -386,7 +392,17 @@ class BinaryDataNotification:
 	def component_data_var_removed(self, view: 'BinaryView', _component: component.Component, var: 'DataVariable'):
 		pass
 
+	def type_archive_attached(self, view: 'BinaryView', id: str, path: str):
+		pass
 
+	def type_archive_detached(self, view: 'BinaryView', id: str, path: str):
+		pass
+
+	def type_archive_connected(self, view: 'BinaryView', archive: 'typearchive.TypeArchive'):
+		pass
+
+	def type_archive_disconnected(self, view: 'BinaryView', archive: 'typearchive.TypeArchive'):
+		pass
 
 
 class StringReference:
@@ -439,7 +455,7 @@ class AnalysisCompletionEvent:
 	"""
 	The ``AnalysisCompletionEvent`` object provides an asynchronous mechanism for receiving
 	callbacks when analysis is complete. The callback runs once. A completion event must be added
-	for each new analysis in order to be notified of each analysis completion.  The
+	for each new analysis in order to be notified of each analysis completion. The
 	AnalysisCompletionEvent class takes responsibility for keeping track of the object's lifetime.
 
 	:Example:
@@ -635,6 +651,11 @@ class BinaryDataNotificationCallbacks:
 			self._cb.componentFunctionRemoved = self._cb.componentFunctionRemoved.__class__(self._component_function_removed)
 			self._cb.componentDataVariableAdded = self._cb.componentDataVariableAdded.__class__(self._component_data_variable_added)
 			self._cb.componentDataVariableRemoved = self._cb.componentDataVariableRemoved.__class__(self._component_data_variable_removed)
+
+			self._cb.typeArchiveAttached = self._cb.typeArchiveAttached.__class__(self._type_archive_attached)
+			self._cb.typeArchiveDetached = self._cb.typeArchiveDetached.__class__(self._type_archive_detached)
+			self._cb.typeArchiveConnected = self._cb.typeArchiveConnected.__class__(self._type_archive_connected)
+			self._cb.typeArchiveDisconnected = self._cb.typeArchiveDisconnected.__class__(self._type_archive_disconnected)
 		else:
 			if notify.notifications & NotificationType.NotificationBarrier:
 				self._cb.notificationBarrier = self._cb.notificationBarrier.__class__(self._notification_barrier)
@@ -714,6 +735,15 @@ class BinaryDataNotificationCallbacks:
 				self._cb.componentDataVariableAdded = self._cb.componentDataVariableAdded.__class__(self._component_data_variable_added)
 			if notify.notifications & NotificationType.ComponentDataVariableRemoved:
 				self._cb.componentDataVariableRemoved = self._cb.componentDataVariableRemoved.__class__(self._component_data_variable_removed)
+
+			if notify.notifications & NotificationType.TypeArchiveAttached:
+				self._cb.typeArchiveAttached = self._cb.typeArchiveAttached.__class__(self._type_archive_attached)
+			if notify.notifications & NotificationType.TypeArchiveDetached:
+				self._cb.typeArchiveDetached = self._cb.typeArchiveDetached.__class__(self._type_archive_detached)
+			if notify.notifications & NotificationType.TypeArchiveConnected:
+				self._cb.typeArchiveConnected = self._cb.typeArchiveConnected.__class__(self._type_archive_connected)
+			if notify.notifications & NotificationType.TypeArchiveDisconnected:
+				self._cb.typeArchiveDisconnected = self._cb.typeArchiveDisconnected.__class__(self._type_archive_disconnected)
 
 	def _register(self) -> None:
 		core.BNRegisterDataNotification(self._view.handle, self._cb)
@@ -1084,6 +1114,33 @@ class BinaryDataNotificationCallbacks:
 			self._notify.component_data_var_removed(self._view, result, DataVariable.from_core_struct(var, self._view))
 		except:
 			log_error(traceback.format_exc())
+
+	def _type_archive_attached(self, ctxt, view: core.BNBinaryView, id: ctypes.c_char_p, path: ctypes.c_char_p):
+		try:
+			self._notify.type_archive_attached(self._view, core.pyNativeStr(id), core.pyNativeStr(path))
+		except:
+			log_error(traceback.format_exc())
+
+	def _type_archive_detached(self, ctxt, view: core.BNBinaryView, id: ctypes.c_char_p, path: ctypes.c_char_p):
+		try:
+			self._notify.type_archive_detached(self._view, core.pyNativeStr(id), core.pyNativeStr(path))
+		except:
+			log_error(traceback.format_exc())
+
+	def _type_archive_connected(self, ctxt, view: core.BNBinaryView, archive: core.BNTypeArchive):
+		try:
+			py_archive = typearchive.TypeArchive(handle=core.BNNewTypeArchiveReference(archive))
+			self._notify.type_archive_connected(self._view, py_archive)
+		except:
+			log_error(traceback.format_exc())
+
+	def _type_archive_disconnected(self, ctxt, view: core.BNBinaryView, archive: core.BNTypeArchive):
+		try:
+			py_archive = typearchive.TypeArchive(handle=core.BNNewTypeArchiveReference(archive))
+			self._notify.type_archive_disconnected(self._view, py_archive)
+		except:
+			log_error(traceback.format_exc())
+
 
 	@property
 	def view(self) -> 'BinaryView':
@@ -1962,7 +2019,7 @@ class BinaryView:
 	either and are used explicitly for subclassing a BinaryView.
 
 	.. note:: An important note on the ``*_user_*()`` methods. Binary Ninja makes a distinction between edits \
-	performed by the user and actions performed by auto analysis.  Auto analysis actions that can quickly be recalculated \
+	performed by the user and actions performed by auto analysis. Auto analysis actions that can quickly be recalculated \
 	are not saved to the database. Auto analysis actions that take a long time and all user edits are stored in the \
 	database (e.g. :py:func:`remove_user_function` rather than :py:func:`remove_function`). Thus use ``_user_`` methods if saving \
 	to the database is desired.
@@ -2308,6 +2365,7 @@ class BinaryView:
 			>>> binaryninja.load('/bin/ls', options={'loader.imageBase': 0xfffffff0000, 'loader.macho.processFunctionStarts' : False})
 			<BinaryView: '/bin/ls', start 0xfffffff0000, len 0xa290>
 			>>>
+
 		"""
 
 		binaryninja._init_plugins()
@@ -2840,6 +2898,31 @@ class BinaryView:
 			return result
 		finally:
 			core.BNFreeTypeLibraryList(libraries, count.value)
+
+	@property
+	def attached_type_archives(self) -> Mapping['str', 'str']:
+		"""All attached type archive ids and paths (read-only)"""
+		ids = ctypes.POINTER(ctypes.c_char_p)()
+		paths = ctypes.POINTER(ctypes.c_char_p)()
+		count = core.BNBinaryViewGetTypeArchives(self.handle, ids, paths)
+		result = {}
+		try:
+			for i in range(0, count):
+				result[core.pyNativeStr(ids[i])] = core.pyNativeStr(paths[i])
+			return result
+		finally:
+			core.BNFreeStringList(ids, count)
+			core.BNFreeStringList(paths, count)
+
+	@property
+	def connected_type_archives(self) -> List['typearchive.TypeArchive']:
+		"""All connected type archive objects (read-only)"""
+		result = []
+		for (id, path) in self.attached_type_archives.items():
+			archive = self.get_type_archive(id)
+			if archive is not None:
+				result.append(archive)
+		return result
 
 	@property
 	def segments(self) -> List['Segment']:
@@ -3670,7 +3753,7 @@ class BinaryView:
 		"""
 		``read`` returns the data reads at most ``length`` bytes from virtual address ``addr``.
 
-		.. note:: Python2 returns a str, but Python3 returns a bytes object.  str(DataBufferObject) will \
+		.. note:: Python2 returns a str, but Python3 returns a bytes object. str(DataBufferObject) will \
  		still get you a str in either case.
 
 		:param int addr: virtual address to read from.
@@ -3830,9 +3913,9 @@ class BinaryView:
 
 	def get_next_valid_offset(self, addr: int) -> int:
 		"""
-		``get_next_valid_offset`` returns the next valid offset after ``addr``.
+		``get_next_valid_offset`` returns the next valid offset in the BinaryView starting from the given virtual address ``addr``.
 
-		:param int addr: a virtual address
+		:param int addr: a virtual address to start checking from.
 		:return: The minimum of the next valid offset in the BinaryView and the end address of the BinaryView
 		:rtype: int
 		"""
@@ -4102,10 +4185,9 @@ class BinaryView:
 
 	def update_analysis(self) -> None:
 		"""
-		``update_analysis`` asynchronously starts the analysis running and returns immediately. Analysis of BinaryViews
-		does not occur automatically, the user must start analysis by calling either :py:func:`update_analysis` or
-		:py:func:`update_analysis_and_wait`. An analysis update **must** be run after changes are made which could change
-		analysis results such as adding functions.
+		``update_analysis`` asynchronously starts the analysis running and returns immediately.
+		An analysis update **must** be run after changes are made which could change analysis
+		results such as adding functions.
 
 		:rtype: None
 		"""
@@ -4114,9 +4196,7 @@ class BinaryView:
 	def update_analysis_and_wait(self) -> None:
 		"""
 		``update_analysis_and_wait`` blocking call to update the analysis, this call returns when the analysis is
-		complete.  Analysis of BinaryViews does not occur automatically, the user must start analysis by calling either
-		:py:func:`update_analysis` or :py:func:`update_analysis_and_wait`. An analysis update **must** be run after changes are
-		made which could change analysis results such as adding functions.
+		complete. An analysis update **must** be run after changes are made which could change analysis results such as adding functions.
 
 		:rtype: None
 		"""
@@ -4507,6 +4587,7 @@ class BinaryView:
 		:param int length: optional length of query
 		:return: list of integers
 		:rtype: list(integer)
+
 		:Example:
 
 			>>> bv.get_data_refs(here)
@@ -4538,6 +4619,7 @@ class BinaryView:
 		:param int length: optional length of query
 		:return: list of integers
 		:rtype: list(integer)
+
 		:Example:
 
 			>>> bv.get_data_refs_from(here)
@@ -5634,6 +5716,7 @@ class BinaryView:
 		:param str tag_type_name: The name of the tag type for this Tag
 		:param str data: additional data for the Tag
 		:param bool user: Whether or not a user tag
+
 		:Example:
 
 			>>> bv.add_tag(here, "Crashes", "Null pointer dereference")
@@ -6120,7 +6203,7 @@ class BinaryView:
 	) -> bool:
 		"""
 		``is_skip_and_return_zero_patch_available`` queries the architecture plugin to determine if the
-		instruction at ``addr`` is similar to an x86 "call"  instruction which can be made to return zero.  The actual
+		instruction at ``addr`` is similar to an x86 "call" instruction which can be made to return zero. The actual
 		logic of which is implemented in the ``perform_is_skip_and_return_zero_patch_available`` in the corresponding
 		architecture.
 
@@ -6383,6 +6466,7 @@ class BinaryView:
 
 		:param path: Pathname of the desired Component
 		:return: The Component at that pathname
+
 		:Example:
 
 			>>> c = bv.create_component(name="MyComponent")
@@ -6857,6 +6941,7 @@ class BinaryView:
 
 		:param LinearViewCursor pos: Position to start retrieving linear disassembly lines from
 		:return: a list of :py:class:`~binaryninja.lineardisassembly.LinearDisassemblyLine` objects for the previous lines.
+
 		:Example:
 
 			>>> settings = DisassemblySettings()
@@ -7490,11 +7575,14 @@ class BinaryView:
 			return None
 		return _types.Type.create(handle, platform=self.platform)
 
-	def import_com_type_for_guid(self, guid: Union[str, uuid.UUID]) -> Optional['_types.Type']:
+	def import_type_by_guid(self, guid: Union[str, uuid.UUID]) -> Optional['_types.Type']:
 		"""
-		``import_com_type_for_guid`` recursively imports a com interface given its GUID.
+		``import_type_by_guid`` recursively imports a type interface given its GUID.
 
-		.. note:: This method is only available on Windows.
+		.. note:: To support this type of lookup a type library must have
+			contain a metadata key called "type_guids" which is a map
+			Dict[string_guid, string_type_name] or
+			Dict[string_guid, Tuple[string_type_name, type_library_name]]
 
 		:param str guid: GUID of the COM interface to import
 		:return: the object type, with any interior `NamedTypeReferences` renamed as necessary to be appropriate for the current view
@@ -7506,17 +7594,10 @@ class BinaryView:
 		if self.arch is None:
 			return None
 
-		tl_name = "winX64common" if self.arch.name == "x86_64" else "win32common"
-		tl = self.get_type_library(tl_name)
-		if tl is None:
-			return None
+		if type_handle := core.BNBinaryViewImportTypeLibraryTypeByGuid(self.handle, guid):
+			return _types.Type.create(type_handle, platform=self.platform)
 
-		type_name = tl.metadata.get("com_interface_guids", {})
-		assert isinstance(type_name, dict)
-		type_name = type_name.get(guid, None)
-		if type_name is None:
-			return None
-		return self.import_library_type(type_name, tl)
+		return None
 
 	def import_library_object(self, name: str, lib: Optional[typelibrary.TypeLibrary] = None) -> Optional[Tuple['typelibrary.TypeLibrary', '_types.Type']]:
 		"""
@@ -7710,6 +7791,391 @@ class BinaryView:
 		name = _types.QualifiedName._from_core_struct(result_name[0])
 		core.BNFreeQualifiedName(result_name)
 		return lib, name
+
+	def attach_type_archive(self, archive: 'typearchive.TypeArchive'):
+		"""
+		Attach a given type archive to the analysis and try to connect to it.
+		If attaching was successful, names from that archive will become available to pull,
+		but no types will actually be associated by calling this.
+		:param archive: New archive
+		"""
+		attached = self.attach_type_archive_by_id(archive.id, archive.path)
+		assert attached == archive
+
+	def attach_type_archive_by_id(self, id: str, path: str) -> Optional['typearchive.TypeArchive']:
+		"""
+		Attach a type archive to the owned analysis and try to connect to it.
+		If attaching was successful, names from that archive will become available to pull,
+		but no types will actually be associated by calling this.
+
+		The behavior of this function is rather complicated, in an attempt to enable the
+		ability to have attached, but disconnected Type Archives.
+
+		Normal operation:
+
+		If there was no previously connected Type Archive whose id matches `id`, and the
+		file at `path` contains a Type Archive whose id matches `id`, it will be
+		attached and connected.
+
+		Edge-cases:
+
+		If there was a previously connected Type Archive whose id matches `id`, nothing
+		will happen, and it will simply be returned.
+		If the file at `path` does not exist, nothing will happen and None will be returned.
+		If the file at `path` exists but does not contain a Type Archive whose id matches `id`,
+		nothing will happen and None will be returned.
+		If there was a previously attached but disconnected Type Archive whose id matches `id`,
+		and the file at `path` contains a Type Archive whose id matches `id`, the
+		previously attached Type Archive will have its saved path updated to point
+		to `path`. The Type Archive at `path` will be connected and returned.
+
+		:param id: Id of Type Archive to attach
+		:param path: Path to file of Type Archive to attach
+		:return: Attached archive object, if it could be connected.
+		"""
+		archive = core.BNBinaryViewAttachTypeArchive(self.handle, id, path)
+		if not archive:
+			return None
+		return typearchive.TypeArchive(handle=archive)
+
+	def detach_type_archive(self, archive: 'typearchive.TypeArchive'):
+		"""
+		Detach from a type archive, breaking all associations to types within the archive
+		:param archive: Type archive to detach
+		"""
+		self.detach_type_archive_by_id(archive.id)
+
+	def detach_type_archive_by_id(self, id: str):
+		"""
+		Detach from a type archive, breaking all associations to types within the archive
+		:param id: Id of archive to detach
+		"""
+		if not core.BNBinaryViewDetachTypeArchive(self.handle, id):
+			raise RuntimeError("BNBinaryViewDetachTypeArchive")
+
+	def get_type_archive(self, id: str) -> Optional['typearchive.TypeArchive']:
+		"""
+		Look up a connected archive by its id
+		:param id: Id of archive
+		:return: Archive, if one exists with that id. Otherwise None
+		"""
+		result = core.BNBinaryViewGetTypeArchive(self.handle, id)
+		if result is None:
+			return None
+		return typearchive.TypeArchive(result)
+
+	def get_type_archive_path(self, id: str) -> Optional[str]:
+		"""
+		Look up the path for an attached (but not necessarily connected) type archive by its id
+		:param id: Id of archive
+		:return: Archive path, if it is attached. Otherwise None.
+		"""
+		result = core.BNBinaryViewGetTypeArchivePath(self.handle, id)
+		if result is None:
+			return None
+		return result
+
+	@property
+	def type_archive_type_names(self) -> Mapping['_types.QualifiedName', List[Tuple['typearchive.TypeArchive', str]]]:
+		"""
+		Get a list of all available type names in all connected archives, and their archive/type id pair
+		:return: name <-> [(archive, archive type id)] for all type names
+		"""
+		names = ctypes.POINTER(core.BNQualifiedName)()
+		name_count = core.BNBinaryViewGetTypeArchiveTypeNameList(self.handle, names)
+
+		result = {}
+		try:
+			for i in range(0, name_count):
+				name = _types.QualifiedName._from_core_struct(names[i])
+				result[name] = self.get_type_archives_for_type_name(name)
+			return result
+		finally:
+			core.BNFreeTypeNameList(names, name_count)
+
+	def get_type_archives_for_type_name(self, name: '_types.QualifiedNameType') -> List[Tuple['typearchive.TypeArchive', str]]:
+		"""
+		Get a list of all connected type archives that have a given type name
+		:return: (archive, archive type id) for all archives
+		"""
+		name = _types.QualifiedName(name)
+		archive_ids = ctypes.POINTER(ctypes.c_char_p)()
+		type_ids = ctypes.POINTER(ctypes.c_char_p)()
+		id_count = core.BNBinaryViewGetTypeArchiveTypeNames(self.handle, name._to_core_struct(), archive_ids, type_ids)
+		ids = []
+
+		type_archives = self.connected_type_archives
+		type_archives_by_id = {}
+		for archive in type_archives:
+			type_archives_by_id[archive.id] = archive
+		try:
+			for j in range(0, id_count):
+				ids.append((type_archives_by_id[core.pyNativeStr(archive_ids[j])], core.pyNativeStr(type_ids[j])))
+			return ids
+		finally:
+			core.BNFreeStringList(archive_ids, id_count)
+			core.BNFreeStringList(type_ids, id_count)
+
+	@property
+	def associated_type_archive_types(self) -> Mapping['_types.QualifiedName', Tuple[Optional['typearchive.TypeArchive'], str]]:
+		"""
+		Get a list of all types in the analysis that are associated with attached type archives
+		:return: Map of all analysis types to their corresponding archive / id. If a type is associated with a disconnected type archive, the archive will be None.
+		"""
+		result = {}
+
+		type_archives = self.attached_type_archives
+		type_archives_by_id = {}
+		for (archive_id, _) in type_archives.items():
+			type_archives_by_id[archive_id] = self.get_type_archive(archive_id)
+
+		for type_id, (archive_id, archive_type_id) in self.associated_type_archive_type_ids.items():
+			name = self.get_type_name_by_id(type_id)
+			if name is None:
+				continue
+			result[name] = (type_archives_by_id.get(archive_id, None), archive_type_id)
+		return result
+
+	@property
+	def associated_type_archive_type_ids(self) -> Mapping[str, Tuple[str, str]]:
+		"""
+		Get a list of all types in the analysis that are associated with type archives
+		:return: Map of all analysis types to their corresponding archive / id
+		"""
+
+		type_ids = ctypes.POINTER(ctypes.c_char_p)()
+		archive_ids = ctypes.POINTER(ctypes.c_char_p)()
+		archive_type_ids = ctypes.POINTER(ctypes.c_char_p)()
+		count = core.BNBinaryViewGetAssociatedTypeArchiveTypes(self.handle, type_ids, archive_ids, archive_type_ids)
+
+		result = {}
+		try:
+			for i in range(0, count):
+				type_id = core.pyNativeStr(type_ids[i])
+				archive_id = core.pyNativeStr(archive_ids[i])
+				archive_type_id = core.pyNativeStr(archive_type_ids[i])
+				result[type_id] = (archive_id, archive_type_id)
+			return result
+		finally:
+			core.BNFreeStringList(type_ids, count)
+			core.BNFreeStringList(archive_ids, count)
+			core.BNFreeStringList(archive_type_ids, count)
+
+	def get_associated_types_from_archive(self, archive: 'typearchive.TypeArchive') -> Mapping['_types.QualifiedName', str]:
+		"""
+		Get a list of all types in the analysis that are associated with a specific type archive
+		:return: Map of all analysis types to their corresponding archive id
+		"""
+		result = {}
+
+		for type_id, archive_type_id in self.get_associated_types_from_archive_by_id(archive.id).items():
+			name = self.get_type_name_by_id(type_id)
+			if name is None:
+				continue
+			result[name] = archive_type_id
+		return result
+
+	def get_associated_types_from_archive_by_id(self, archive_id: str) -> Mapping[str, str]:
+		"""
+		Get a list of all types in the analysis that are associated with a specific type archive
+		:return: Map of all analysis types to their corresponding archive id
+		"""
+
+		type_ids = ctypes.POINTER(ctypes.c_char_p)()
+		archive_type_ids = ctypes.POINTER(ctypes.c_char_p)()
+		count = core.BNBinaryViewGetAssociatedTypesFromArchive(self.handle, archive_id, type_ids, archive_type_ids)
+
+		result = {}
+		try:
+			for i in range(0, count):
+				type_id = core.pyNativeStr(type_ids[i])
+				archive_type_id = core.pyNativeStr(archive_type_ids[i])
+				result[type_id] = archive_type_id
+			return result
+		finally:
+			core.BNFreeStringList(type_ids, count)
+			core.BNFreeStringList(archive_type_ids, count)
+
+	def get_associated_type_archive_type_target(self, name: '_types.QualifiedNameType') -> Optional[Tuple[Optional['typearchive.TypeArchive'], str]]:
+		"""
+		Determine the target archive / type id of a given analysis type
+		:param name: Analysis type
+		:return: (archive, archive type id) if the type is associated. None otherwise.
+		"""
+		type_id = self.get_type_id(name)
+		if type_id == '':
+			return None
+		result = self.get_associated_type_archive_type_target_by_id(type_id)
+		if result is None:
+			return None
+		archive_id, type_id = result
+		archive = self.get_type_archive(archive_id)
+		return archive, type_id
+
+	def get_associated_type_archive_type_target_by_id(self, type_id: str) -> Optional[Tuple[str, str]]:
+		"""
+		Determine the target archive / type id of a given analysis type
+		:param type_id: Analysis type id
+		:return: (archive id, archive type id) if the type is associated. None otherwise.
+		"""
+		archive_id = ctypes.c_char_p()
+		archive_type_id = ctypes.c_char_p()
+		if not core.BNBinaryViewGetAssociatedTypeArchiveTypeTarget(self.handle, type_id, archive_id, archive_type_id):
+			return None
+		result = (core.pyNativeStr(archive_id.value), core.pyNativeStr(archive_type_id.value))
+		core.free_string(archive_id)
+		core.free_string(archive_type_id)
+		return result
+
+	def get_associated_type_archive_type_source(self, archive: 'typearchive.TypeArchive', archive_type: '_types.QualifiedNameType') -> Optional['_types.QualifiedName']:
+		"""
+		Determine the local source type name for a given archive type
+		:param archive: Target type archive
+		:param archive_type: Name of target archive type
+		:return: Name of source analysis type, if this type is associated. None otherwise.
+		"""
+		archive_type_id = archive.get_type_id(archive_type)
+		if archive_type_id is None:
+			return None
+		result = self.get_associated_type_archive_type_source_by_id(archive.id, archive_type_id)
+		if result is None:
+			return None
+		return self.get_type_name_by_id(result)
+
+	def get_associated_type_archive_type_source_by_id(self, archive_id: str, archive_type_id: str) -> Optional[str]:
+		"""
+		Determine the local source type id for a given archive type
+		:param archive_id: Id of target type archive
+		:param archive_type_id: Id of target archive type
+		:return: Id of source analysis type, if this type is associated. None otherwise.
+		"""
+		type_id = ctypes.c_char_p()
+		if not core.BNBinaryViewGetAssociatedTypeArchiveTypeSource(self.handle, archive_id, archive_type_id, type_id):
+			return None
+		result = core.pyNativeStr(type_id.value)
+		core.free_string(type_id)
+		return result
+
+	def disassociate_type_archive_type(self, type: '_types.QualifiedNameType') -> bool:
+		"""
+		Disassociate an associated type, so that it will no longer receive updates from its connected type archive
+		:param type: Name of type in analysis
+		:return: True if successful
+		"""
+		type_id = self.get_type_id(type)
+		if type_id == '':
+			return False
+		return self.disassociate_type_archive_type_by_id(type_id)
+
+	def disassociate_type_archive_type_by_id(self, type_id: str) -> bool:
+		"""
+		Disassociate an associated type id, so that it will no longer receive updates from its connected type archive
+		:param type_id: Id of type in analysis
+		:return: True if successful
+		"""
+		return core.BNBinaryViewDisassociateTypeArchiveType(self.handle, type_id)
+
+	def pull_types_from_archive(self, archive: 'typearchive.TypeArchive', names: List['_types.QualifiedNameType']) \
+			-> Optional[Mapping['_types.QualifiedName', Tuple['_types.QualifiedName', '_types.Type']]]:
+		"""
+		Pull types from a type archive, updating them and any dependencies
+		:param archive: Target type archive
+		:param names: Names of desired types in type archive
+		:return: { name: (name, type) } Mapping from archive name to (analysis name, definition), None on error
+		"""
+		archive_type_ids = []
+		for name in names:
+			archive_type_id = archive.get_type_id(name)
+			if archive_type_id is None:
+				return None
+			archive_type_ids.append(archive_type_id)
+		result = self.pull_types_from_archive_by_id(archive.id, archive_type_ids)
+		if result is None:
+			return None
+
+		results = {}
+		for (archive_type_id, analysis_type_id) in result.items():
+			results[archive.get_type_name_by_id(archive_type_id)] = (self.get_type_name_by_id(analysis_type_id), self.get_type_by_id(analysis_type_id))
+
+		return results
+
+	def pull_types_from_archive_by_id(self, archive_id: str, archive_type_ids: List[str]) \
+			-> Optional[Mapping[str, str]]:
+		"""
+		Pull types from a type archive by id, updating them and any dependencies
+		:param archive_id: Target type archive id
+		:param archive_type_ids: Ids of desired types in type archive
+		:return: { id: id } Mapping from archive type id to analysis type id, None on error
+		"""
+		api_ids = (ctypes.c_char_p * len(archive_type_ids))()
+		for i, id in enumerate(archive_type_ids):
+			api_ids[i] = core.cstr(id)
+
+		updated_archive_type_strs = ctypes.POINTER(ctypes.c_char_p)()
+		updated_analysis_type_strs = ctypes.POINTER(ctypes.c_char_p)()
+		updated_type_count = ctypes.c_size_t(0)
+		try:
+			if not core.BNBinaryViewPullTypeArchiveTypes(self.handle, archive_id, api_ids, len(archive_type_ids), updated_archive_type_strs, updated_analysis_type_strs, updated_type_count):
+				return None
+
+			results = {}
+			for i in range(0, updated_type_count.value):
+				results[core.pyNativeStr(updated_archive_type_strs[i])] = core.pyNativeStr(updated_analysis_type_strs[i])
+			return results
+		finally:
+			core.BNFreeStringList(updated_archive_type_strs, updated_type_count.value)
+			core.BNFreeStringList(updated_analysis_type_strs, updated_type_count.value)
+
+	def push_types_to_archive(self, archive: 'typearchive.TypeArchive', names: List['_types.QualifiedNameType']) \
+			-> Optional[Mapping['_types.QualifiedName', Tuple['_types.QualifiedName', '_types.Type']]]:
+		"""
+		Push a collection of types, and all their dependencies, into a type archive
+		:param archive: Target type archive
+		:param names: Names of types in analysis
+		:return: { name: (name, type) } Mapping from analysis name to (archive name, definition), None on error
+		"""
+		analysis_type_ids = []
+		for name in names:
+			analysis_type_id = self.get_type_id(name)
+			if analysis_type_id is None:
+				return None
+			analysis_type_ids.append(analysis_type_id)
+		result = self.push_types_to_archive_by_id(archive.id, analysis_type_ids)
+		if result is None:
+			return None
+
+		results = {}
+		for (analysis_type_id, archive_type_id) in result.items():
+			results[self.get_type_name_by_id(analysis_type_id)] = (archive.get_type_name_by_id(archive_type_id), archive.get_type_by_id(archive_type_id))
+
+		return results
+
+	def push_types_to_archive_by_id(self, archive_id: str, type_ids: List[str]) \
+			-> Optional[Mapping[str, str]]:
+		"""
+		Push a collection of types, and all their dependencies, into a type archive
+		:param archive_id: Id of target type archive
+		:param type_ids: Ids of types in analysis
+		:return: True if successful
+		"""
+		api_ids = (ctypes.c_char_p * len(type_ids))()
+		for i, id in enumerate(type_ids):
+			api_ids[i] = core.cstr(id)
+
+		updated_analysis_type_strs = ctypes.POINTER(ctypes.c_char_p)()
+		updated_archive_type_strs = ctypes.POINTER(ctypes.c_char_p)()
+		updated_type_count = ctypes.c_size_t(0)
+		try:
+			if not core.BNBinaryViewPushTypeArchiveTypes(self.handle, archive_id, api_ids, len(type_ids), updated_analysis_type_strs, updated_archive_type_strs, updated_type_count):
+				return None
+
+			results = {}
+			for i in range(0, updated_type_count.value):
+				results[core.pyNativeStr(updated_analysis_type_strs[i])] = core.pyNativeStr(updated_archive_type_strs[i])
+			return results
+		finally:
+			core.BNFreeStringList(updated_analysis_type_strs, updated_type_count.value)
+			core.BNFreeStringList(updated_archive_type_strs, updated_type_count.value)
 
 	def register_platform_types(self, platform: '_platform.Platform') -> None:
 		"""
@@ -8104,6 +8570,48 @@ class BinaryView:
 			)
 
 			return self.QueueGenerator(t, results)
+
+	def search(self, pattern: str, start: int = None, end: int = None, raw: bool = False, ignore_case: bool = False, overlap: bool = False, align: int = 1) -> QueueGenerator:
+		"""
+		Searches for matches of the specified `pattern` within this BinaryView with an optionally provided address range specified by `start` and `end`.
+		The search pattern can be interpreted in various ways:
+			- specified as a string of hexadecimal digits where whitespace is ignored, and the '?' character acts as a wildcard
+			- a regular expression suitable for working with bytes
+			- or if the `raw` option is enabled, the pattern is interpreted as a raw string, and any special characters are escaped and interpreted literally
+
+		:param str pattern: The pattern to search for.
+		:param int start: The address to start the search from. (default: None)
+		:param int end: The address to end the search (inclusive). (default: None)
+		:param bool raw: Whether to interpret the pattern as a raw string (default: False).
+		:param bool ignore_case: Whether to perform case-insensitive matching (default: False).
+		:param bool overlap: Whether to allow matches to overlap (default: False).
+		:param int align: The alignment of matches, must be a power of 2 (default: 1).
+
+		:return: A generator object that yields the offset and matched DataBuffer for each match found.
+		:rtype: QueueGenerator
+		"""
+		if start is None:
+			start = self.start
+		if end is None:
+			end = self.end
+			if end != 0xffffffffffffffff:
+				end = end - 1
+		if start > end:
+			raise ValueError("The start address must be less than or equal to end address!")
+		query = {
+			"pattern": pattern,
+			"start": start,
+			"end": end,
+			"raw": raw,
+			"ignoreCase": ignore_case,
+			"overlap": overlap,
+			"align": align
+		}
+		results = queue.Queue()
+		match_callback_obj = ctypes.CFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_ulonglong, ctypes.POINTER(core.BNDataBuffer)
+		)(lambda ctxt, offset, match: results.put((offset, databuffer.DataBuffer(handle=match))) or True)
+		t = threading.Thread(target=lambda: core.BNSearch(self.handle, json.dumps(query), None, match_callback_obj))
+		return self.QueueGenerator(t, results)
 
 	def reanalyze(self) -> None:
 		"""
@@ -8637,7 +9145,7 @@ class BinaryView:
 			  :py:func:`add_expression_parser_magic_value` API. Notably, the debugger adds all register values into the
 			  expression parser so they can be used directly when navigating. The register values can be referenced like
 			  `$rbp`, `$x0`, etc. For more details, refer to the related
-			  [debugger docs](https://docs.binary.ninja/guide/debugger.html#navigating-the-binary).
+			  [debugger docs](https://docs.binary.ninja/guide/debugger/index.html#navigating-the-binary)_.
 
 		:param str expression: Arithmetic expression to be evaluated
 		:param int here: (optional) Base address for relative expressions, defaults to zero
@@ -8684,6 +9192,14 @@ class BinaryView:
 		return Logger(self.file.session_id, logger_name)
 
 	def add_external_library(self, name: str, backing_file: Optional['project.ProjectFile'] = None, auto: bool = False) -> externallibrary.ExternalLibrary:
+		"""
+		Add an ExternalLibrary to this BinaryView
+
+		:param name: Name of the external library
+		:param backing_file: Optional ProjectFile that backs the external library
+		:param auto: Whether or not this action is the result of automated analysis
+		:return: The created ExternalLibrary
+		"""
 		file_handle = None
 		if backing_file is not None:
 			file_handle = backing_file._handle
@@ -8692,15 +9208,32 @@ class BinaryView:
 		return externallibrary.ExternalLibrary(handle)
 
 	def remove_external_library(self, name: str):
+		"""
+		Remove an ExternalLibrary from this BinaryView by name.
+		Any associated ExternalLocations will be unassociated from the ExternalLibrary
+
+		:param name: Name of the external library to remove
+		"""
 		core.BNBinaryViewRemoveExternalLibrary(self.handle, name)
 
 	def get_external_library(self, name: str) -> Optional[externallibrary.ExternalLibrary]:
+		"""
+		Get an ExternalLibrary in this BinaryView by name
+
+		:param name: Name of the external library
+		:return: An ExternalLibrary with the given name, or None
+		"""
 		handle = core.BNBinaryViewGetExternalLibrary(self.handle, name)
 		if handle is None:
 			return None
 		return externallibrary.ExternalLibrary(handle)
 
 	def get_external_libraries(self) -> List[externallibrary.ExternalLibrary]:
+		"""
+		Get a list of all ExternalLibrary in this BinaryView
+
+		:return: A list of ExternalLibraries in this BinaryView
+		"""
 		count = ctypes.c_ulonglong(0)
 		handles = core.BNBinaryViewGetExternalLibraries(self.handle, count)
 		assert handles is not None, "core.BNBinaryViewGetExternalLibraries returned None"
@@ -8714,25 +9247,54 @@ class BinaryView:
 		finally:
 			core.BNFreeExternalLibraryList(handles, count.value)
 
-	def add_external_location(self, symbol: '_types.CoreSymbol', library: Optional[externallibrary.ExternalLibrary], external_symbol: Optional[str], external_address: Optional[int], auto: bool = False) -> externallibrary.ExternalLocation:
-		c_addr = None
-		if external_address is not None:
-			c_addr = ctypes.c_ulonglong(external_address)
+	def add_external_location(self, source_symbol: '_types.CoreSymbol', library: Optional[externallibrary.ExternalLibrary], target_symbol: Optional[str], target_address: Optional[int], auto: bool = False) -> externallibrary.ExternalLocation:
+		"""
+		Add an ExternalLocation with its source in this BinaryView.
+		ExternalLocations must have a target address and/or symbol.
 
-		handle = core.BNBinaryViewAddExternalLocation(self.handle, symbol.handle, library._handle if library else None, external_symbol, c_addr, auto)
+		:param source_symbol: Symbol that the association is from
+		:param library: Library that the ExternalLocation belongs to
+		:param target_symbol: Symbol that the ExternalLocation points to
+		:param target_address: Address that the ExternalLocation points to
+		:param auto: Whether or not this action is the result of automated analysis
+		:return: The created ExternalLocation
+		"""
+		c_addr = None
+		if target_address is not None:
+			c_addr = ctypes.c_ulonglong(target_address)
+		elif target_symbol is None:
+			raise ExternalLinkException("External locations must have a target address and/or symbol")
+
+		handle = core.BNBinaryViewAddExternalLocation(self.handle, source_symbol.handle, library._handle if library else None, target_symbol, c_addr, auto)
 		assert handle is not None, "core.BNBinaryViewAddExternalLocation returned None"
 		return externallibrary.ExternalLocation(handle)
 
-	def remove_external_location(self, symbol: '_types.CoreSymbol'):
-		core.BNBinaryViewRemoveExternalLocation(self.handle, symbol._handle)
+	def remove_external_location(self, source_symbol: '_types.CoreSymbol'):
+		"""
+		Remove the ExternalLocation with the given source symbol from this BinaryView
 
-	def get_external_location(self, symbol: '_types.CoreSymbol') -> Optional[externallibrary.ExternalLocation]:
-		handle = core.BNBinaryViewGetExternalLocation(self.handle, symbol.handle)
+		:param source_symbol: Source symbol that will be used to determine the ExternalLocation to remove
+		"""
+		core.BNBinaryViewRemoveExternalLocation(self.handle, source_symbol._handle)
+
+	def get_external_location(self, source_symbol: '_types.CoreSymbol') -> Optional[externallibrary.ExternalLocation]:
+		"""
+		Get the ExternalLocation with the given source symbol in this BinaryView
+
+		:param source_symbol: The source symbol of the ExternalLocation
+		:return: An ExternalLocation with the given source symbol, or None
+		"""
+		handle = core.BNBinaryViewGetExternalLocation(self.handle, source_symbol.handle)
 		if handle is None:
 			return None
 		return externallibrary.ExternalLocation(handle)
 
 	def get_external_locations(self) -> List[externallibrary.ExternalLocation]:
+		"""
+		Get a list of ExternalLocations in this BinaryView
+
+		:return: A list of ExternalLocations in this BinaryView
+		"""
 		count = ctypes.c_ulonglong(0)
 		handles = core.BNBinaryViewGetExternalLocations(self.handle, count)
 		assert handles is not None, "core.BNBinaryViewGetExternalLocations returned None"

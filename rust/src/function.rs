@@ -26,6 +26,10 @@ use crate::{
     symbol::Symbol,
     types::{Conf, NamedTypedVariable, Type},
 };
+pub use binaryninjacore_sys::BNAnalysisSkipReason as AnalysisSkipReason;
+pub use binaryninjacore_sys::BNFunctionAnalysisSkipOverride as FunctionAnalysisSkipOverride;
+pub use binaryninjacore_sys::BNFunctionUpdateType as FunctionUpdateType;
+
 
 use std::hash::Hash;
 use std::{fmt, mem};
@@ -179,6 +183,16 @@ impl Function {
         }
     }
 
+    pub fn set_can_return_auto<T: Into<Conf<bool>>>(&self, can_return: T) {
+        let mut bool_with_confidence = can_return.into().into();
+        unsafe { BNSetAutoFunctionCanReturn(self.handle, &mut bool_with_confidence) }
+    }
+
+    pub fn set_can_return_user<T: Into<Conf<bool>>>(&self, can_return: T) {
+        let mut bool_with_confidence = can_return.into().into();
+        unsafe { BNSetAutoFunctionCanReturn(self.handle, &mut bool_with_confidence) }
+    }
+
     pub fn comment_at(&self, addr: u64) -> BnString {
         unsafe { BnString::from_raw(BNGetCommentForAddress(self.handle, addr)) }
     }
@@ -313,6 +327,40 @@ impl Function {
                 },
             );
         }
+    }
+
+    pub fn analysis_skipped(&self) -> bool {
+        unsafe { BNIsFunctionAnalysisSkipped(self.handle) }
+    }
+
+    pub fn set_analysis_skipped(&self, skip: bool) {
+        if skip {
+            unsafe {
+                BNSetFunctionAnalysisSkipOverride(
+                    self.handle,
+                    BNFunctionAnalysisSkipOverride::AlwaysSkipFunctionAnalysis,
+                );
+            }
+        } else {
+            unsafe {
+                BNSetFunctionAnalysisSkipOverride(
+                    self.handle,
+                    BNFunctionAnalysisSkipOverride::NeverSkipFunctionAnalysis,
+                );
+            }
+        }
+    }
+
+    pub fn analysis_skip_reason(&self) -> AnalysisSkipReason {
+        unsafe { BNGetAnalysisSkipReason(self.handle) }
+    }
+
+    pub fn analysis_skip_override(&self) -> FunctionAnalysisSkipOverride {
+        unsafe { BNGetFunctionAnalysisSkipOverride(self.handle) }
+    }
+
+    pub fn set_analysis_skip_override(&self, override_: FunctionAnalysisSkipOverride) {
+        unsafe { BNSetFunctionAnalysisSkipOverride(self.handle, override_) }
     }
 }
 

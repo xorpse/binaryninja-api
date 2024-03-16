@@ -31,7 +31,7 @@ Disabling plugins can be a quick way to diagnose whether some unexpected behavio
 
 ### Disabling User Settings
 
-In addition to the above mentioned method of disabling user-plugins, you can also set the environment variable `BN_DISABLE_USER_PLUGINS` (the value doesn't matter, the mere existence of the variable is enough). Related, there is another setting: `BN_DISABLE_USER_SETTINGS` that will launch BN without relying on any user settings which is useful for identifying whether a particular behavior is the result of a setting without having to manually change a number of settings.
+In addition to the above-mentioned method of disabling user-plugins, you can also set the environment variable `BN_DISABLE_USER_PLUGINS` (the value doesn't matter, the mere existence of the variable is enough). Related, there is another setting: `BN_DISABLE_USER_SETTINGS` that will launch BN without relying on any user settings which is useful for identifying whether a particular behavior is the result of a setting without having to manually change a number of settings.
 
 ### Other Steps
 
@@ -39,16 +39,16 @@ While third party plugins are not officially supported, there are a number of tr
 
 Additionally, if you're having trouble running a plugin in headless mode (without a GUI calling directly into the core), make sure you're running the Commercial version of Binary Ninja as the Student/Non-Commercial edition does not support headless processing.
 
-Next, if running a python plugin, make sure the python requirements are met by your existing installation. Note that on windows, the bundled python is used and python requirements should be installed either by manually copying the modules to the `plugins` [folder](./index.md#directories), or by switching to a different interpreter in the settings.
+Next, if running a python plugin, make sure the python requirements are met by your existing installation. Note that on Windows, the bundled python is used and python requirements should be installed either by manually copying the modules to the `plugins` [folder](./index.md#directories), or by switching to a different interpreter in the settings.
 
 ## License Problems
 
-- If experiencing problems with Windows UAC permissions during an update, the easiest fix is to completely un-install and [recover][recover] the latest installer and license. Preferences are saved outside the installation folder and are preserved, though you might want to remove your [license](./index.md#license).
+- If experiencing problems with Windows UAC permissions during an update, the easiest fix is to completely uninstall and [recover][recover] the latest installer and license. Preferences are saved outside the installation folder and are preserved, though you might want to remove your [license](./index.md#license).
 - If you need to change the email address on your license, contact [support].
 
 ## Running as Root
 
-Binary Ninja will refuse to run as root on Linux and macOS platforms. You can work around this issue by either running as a regular user, or forcing BN to launch. If you try to use su or another similar tool, make sure that user has permission to the X11 session.
+Binary Ninja will refuse to run as root on Linux and macOS platforms. You can work around this issue by either running as a regular user, or forcing BN to launch. If you try to use `su` or another similar tool, make sure that user has permission to the X11 session.
 
 ## API
 
@@ -64,8 +64,8 @@ The below steps are specific to different platforms that Binary Ninja runs on.  
 
 ### Windows
 
-- While Windows 7 is not officially supported (by us, or Microsoft for that matter), it may work if all available windows updates are installed (including non-security updates with certificate bundle updates).
-- If you install Windows without internet access and have never run windows updates to install an update, you may have an incomplete windows certificate store. You'll see errors when attempting to update about `CERTIFICATE VERIFICATION FAILED`.  If that is the case, you can either use something like `certutil.exe -generateSSTFromWU roots.sst` and then manually copy over the DST and Amazon certificates into your root store, or wait until the next time you have an update from Windows Update which should automatically refresh your certificate store.
+- While Windows 7 is not officially supported (by us, or Microsoft for that matter), it may work if all available Windows updates are installed (including non-security updates with certificate bundle updates).
+- If you install Windows without internet access and have never run Windows updates to install an update, you may have an incomplete Windows certificate store. You'll see errors when attempting to update about `CERTIFICATE VERIFICATION FAILED`.  If that is the case, you can either use something like `certutil.exe -generateSSTFromWU roots.sst` and then manually copy over the DST and Amazon certificates into your root store, or wait until the next time you have an update from Windows Update which should automatically refresh your certificate store.
 
 #### Some Graphics Chipsets
 
@@ -200,3 +200,30 @@ The following environment variables may be helpful when troubleshooting issues:
 | BN_DEBUG_HTTP | Flag (True if exists) | This flag enables additional debug logging of HTTP activity. |
 | BN_DEBUG_EXCEPTION_TRACES | Flag (True if exists) | This variable includes stack traces when exceptions are handled (MacOS and Linux only). |
 | BN_DEBUG_CLANG | Flag (True if exists) | If set, this flag adds additional debugging information to stdout from clang type parsing. |
+
+
+## File Associations
+
+With the addition of [projects](../guide/projects.md) and [type archives](../guide/types/typearchives.md), Binary Ninja now includes support for `.bnpr` (project folders, openable on MacOS), `.bnpm` (project metadata, openable on all platforms), and `.bnta` (type archives, openable on all platforms) file formats. If installed fresh, these file associations will automatically be created. However, when using the built-in updater, the association is not currently added. To manually create the association, use the following:
+
+### MacOS file associations
+
+1. Update to a version with support for the new extensions (builds 4860 or newer)
+1. Run:
+
+```
+/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -f -R -trusted "/Applications/Binary Ninja.app"
+```
+
+### Windows file associations
+
+1. Double-click the file you're trying to open
+1. Click "More Apps"
+1. Scroll to the bottom and select "Look for another app on this PC"
+1. Find wherever you installed Binary Ninja and select the main executable
+
+(Make sure to leave the "Always use this app to open" checkbox selected)
+
+### Linux file associations
+
+1. Re-run the [`linux-setup.sh`](https://github.com/Vector35/binaryninja-api/blob/dev/scripts/linux-setup.sh) script. The appropriate copy is available wherever you installed Binary Ninja inside the `scripts/` subfolder.

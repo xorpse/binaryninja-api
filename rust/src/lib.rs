@@ -35,7 +35,7 @@
 //!
 //! > ⚠️ **These bindings are in a very early beta, only have partial support for the core APIs and are still actively under development. Compatibility _will_ break and conventions _will_ change! They are being used for core Binary Ninja features however, so we expect much of what is already there to be reliable enough to build on, just don't be surprised if your plugins/scripts need to hit a moving target.**
 //!
-//! > ⚠️ This project runs on Rust version `stable-2022-12-15`
+//! > ⚠️ This project runs on Rust version `1.76.0`
 //!
 //! ---
 //!
@@ -231,16 +231,18 @@ pub fn load_with_options<S: BnStrCompatible>(
 ) -> Option<rc::Ref<binaryview::BinaryView>> {
     let filename = filename.into_bytes_with_nul();
 
+    let options_or_default = if let Some(opt) = options {
+        opt
+    } else {
+        Metadata::new_of_type(MetadataType::KeyValueDataType)
+    };
+
     let handle = unsafe {
         binaryninjacore_sys::BNLoadFilename(
             filename.as_ref().as_ptr() as *mut _,
             update_analysis_and_wait,
             None,
-            if let Some(options) = options {
-                options.as_ref().handle
-            } else {
-                Metadata::new_of_type(MetadataType::KeyValueDataType).handle
-            },
+            options_or_default.as_ref().handle,
         )
     };
 

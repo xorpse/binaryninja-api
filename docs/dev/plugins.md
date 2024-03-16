@@ -35,6 +35,8 @@ The [`add_repository`](https://api.binary.ninja/binaryninja.pluginmanager-module
 
 It's useful to be able to reload your plugin during testing. On the Commercial edition of Binary Ninja, this is easily accomplished with a stand-alone headless install using `import binaryninja` after [installing the API](https://github.com/Vector35/binaryninja-api/blob/dev/scripts/install_api.py).  (install_api.py is included in each platforms respective [installation folder](../guide/index.md#binary-path))
 
+Additionally, some plugin types like Architectures or BinaryViews are only loaded at launch and cannot be reloaded during a running session.
+
 For other plugins, we recommend the following workflow from the scripting console which enables easy iteration and testing:
 
 ```python
@@ -206,7 +208,7 @@ class, and you should only ever handle Refs or bare pointers. When in doubt, fee
 
 Managing build infrastructure to build cross-platform native plugins can be a headache even for stables, let alone 
 trying to track all dev releases. To help with that, we've published an [example plugin](https://github.com/CouleeApps/binja-ci-tests) that includes GitHub
-actions to build on MacOS, Linux, and Windows. Combining this with something like a [plugin loader](https://github.com/rikodot/binja_native_plugin_loader) can simplify
+actions to build on MacOS, Linux, and Windows. Combining this with something like a [plugin loader](https://github.com/rikodot/binja_native_sigscan_loader) can simplify
 both publishing and using native plugins.
 
 ### UI Plugins

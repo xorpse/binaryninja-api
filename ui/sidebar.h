@@ -83,6 +83,7 @@ public:
 	void setActiveContext(SplitPaneWidget* panes, ViewFrame* frame, const QString& dataType, BinaryViewRef data);
 	void destroyContext(ViewFrame* frame);
 	void destroyContext(SplitPaneWidget* panes);
+	void destroyViewsForContext(SplitPaneWidget* panes);
 	void moveContextToContainer(SplitPaneWidget* panes, Sidebar* target);
 
 	SplitPaneWidget* currentPanes(SidebarWidgetType* type = nullptr) const;
@@ -124,6 +125,7 @@ public:
 
 	void updateTheme();
 	void updateFonts();
+	void updateVisibility();
 
 	void toggleSidebar();
 

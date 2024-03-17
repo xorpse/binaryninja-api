@@ -1373,7 +1373,7 @@ pub struct BinaryView {
 }
 
 impl BinaryView {
-    pub(crate) unsafe fn from_raw(handle: *mut BNBinaryView) -> Ref<Self> {
+    pub unsafe fn from_raw(handle: *mut BNBinaryView) -> Ref<Self> {
         debug_assert!(!handle.is_null());
 
         Ref::new(Self { handle })
